@@ -336,6 +336,7 @@ interface TranslationProvider {
 |---|---|---|
 | POST | `/api/translate` | SSE 流式。body `{ text, direction }`。返回 `X-Provider` 头 |
 | GET | `/api/word/[word]` | 词详情（词典层 + dict_cache），不调 LLM |
+| POST | `/api/hard-words` | 段落难词提取。body `{ text }`。纯数据库查询，不调 LLM，不消耗配额 |
 | POST | `/api/word/explain` | 上下文释义。body `{ word, context }`，调 LLM |
 | GET | `/api/wordbook` | 列表，支持搜索与标签筛选 |
 | POST | `/api/wordbook` | 收藏。body `{ word, source_context }` |
