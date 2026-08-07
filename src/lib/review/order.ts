@@ -1,0 +1,25 @@
+export type ReviewMode = 'sequential' | 'random'
+
+/** mulberry32 —— 小巧的确定性 PRNG，让随机顺序在测试中可复现。 */
+function prng(seed: number): () => number {
+  let a = seed >>> 0
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+/** 返回新数组，不修改入参。 */
+export function orderCards<T>(items: T[], mode: ReviewMode, seed: number): T[] {
+  const out = [...items]
+  if (mode === 'sequential') return out
+
+  const rand = prng(seed)
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1))
+    ;[out[i], out[j]] = [out[j], out[i]]
+  }
+  return out
+}
