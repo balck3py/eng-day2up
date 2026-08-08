@@ -24,6 +24,7 @@ export function parseDictApi(json: unknown): PhoneticSet {
     if (!Array.isArray(phonetics)) continue
 
     for (const p of phonetics) {
+      if (typeof p !== 'object' || p === null) continue
       const rec = p as { text?: unknown; audio?: unknown }
       const text = typeof rec.text === 'string' && rec.text ? rec.text : null
       const audio = typeof rec.audio === 'string' ? rec.audio : ''
@@ -75,7 +76,7 @@ export async function getPhonetics(
     }
   }
 
-  let json: unknown
+  let parsed: PhoneticSet
   let notFound = false
   try {
     const res = await fetch(`${API_BASE}/${encodeURIComponent(wordKey)}`, {
@@ -83,16 +84,16 @@ export async function getPhonetics(
     })
     if (res.status === 404) {
       notFound = true
+      parsed = { ...EMPTY }
     } else if (!res.ok) {
       return { ...EMPTY }   // 5xx 等临时故障，不写缓存
     } else {
-      json = await res.json()
+      const json: unknown = await res.json()
+      parsed = parseDictApi(json)   // 解析纳入 try/catch，任何解析异常都不应打穿整个请求
     }
   } catch {
-    return { ...EMPTY }     // 网络错误或超时，不写缓存
+    return { ...EMPTY }     // 网络错误 / 超时 / 解析异常，不写缓存
   }
-
-  const parsed = notFound ? { ...EMPTY } : parseDictApi(json)
 
   await admin.from('dict_cache').upsert({
     word_key: wordKey,
