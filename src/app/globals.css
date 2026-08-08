@@ -1,26 +1,74 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --paper: #F5F7FA;
+  --card: #FFFFFF;
+  --ink: #14213D;
+  --ink-2: #5B6B8C;
+  --ink-3: #8894AC;
+  --rule: #DDE3EC;
+  --seal: #A8324A;
+  --jade: #2E6F5E;
+  --focus: #2B5CE6;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-paper: var(--paper);
+  --color-card: var(--card);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-rule: var(--rule);
+  --color-seal: var(--seal);
+  --color-jade: var(--jade);
+  --color-focus: var(--focus);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --paper: #10141C;
+    --card: #171D28;
+    --ink: #E8ECF3;
+    --ink-2: #9AA7BF;
+    --ink-3: #6B7890;
+    --rule: #2A3342;
+    --seal: #E0708A;
+    --jade: #5FB89C;
+    --focus: #6C93FF;
   }
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+/* 键盘焦点：2px --focus 外环，替代 outline: none */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@keyframes word-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.word-card-enter {
+  animation: word-card-in 150ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .word-card-enter {
+    animation: none;
+  }
 }
