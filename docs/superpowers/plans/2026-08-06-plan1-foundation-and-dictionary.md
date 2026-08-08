@@ -1342,17 +1342,35 @@ git commit -m "feat: ECDICT 中文释义解析为分词性列表"
 
 - [ ] **Step 1: 下载 ECDICT 数据**
 
+> ⚠️ **实施时更正（2026-08-07）**：本计划原先写的 `ecdict-csv-28.zip` 实测返回 **404** ——
+> release 1.0.28 里根本没有 CSV 包，只有 eudic / mdx / mobi / sqlite / stardict 五种。
+> 正确的资产是 **`ecdict-stardict-28.zip`**（约 70MB），解压后即得 `stardict.csv`。
+>
+> 另：实际导入改用 Python 脚本 `scripts/import_ecdict.py`（uv PEP-723 内联依赖），
+> 由使用者指定。它自带 `--self-test`，用来保证 Python 侧的过滤与词形展开逻辑
+> 与已有单元测试的 TS 版（`filter.ts` / `exchange.ts`）行为一致。
+
+```bash
+uv run scripts/import_ecdict.py --dry-run   # 下载 + 解压 + 统计，不写库
+uv run scripts/import_ecdict.py             # 实际导入
+```
+
+脚本会自动下载、校验压缩包完整性、解压出 `data/stardict.csv`。
+
+若要手工下载：
+
 ```bash
 mkdir -p data
-curl -L -o data/ecdict.zip \
-  https://github.com/skywind3000/ECDICT/releases/download/1.0.28/ecdict-csv-28.zip
-unzip -o data/ecdict.zip -d data/
+curl -L -o data/ecdict-stardict.zip \
+  https://github.com/skywind3000/ECDICT/releases/download/1.0.28/ecdict-stardict-28.zip
+unzip -o data/ecdict-stardict.zip -d data/
 ls -lh data/stardict.csv
 ```
 
-预期：`data/stardict.csv` 存在，约 700MB。
+预期：`data/stardict.csv` 存在，数百 MB。
 
-若下载链接失效，去 https://github.com/skywind3000/ECDICT/releases 找最新的 CSV 包，解压后确保得到 `data/stardict.csv`。
+若下载链接再次失效，去 https://github.com/skywind3000/ECDICT/releases 查看现有资产，
+挑体积最接近、解压后含 `stardict.csv` 的那个。
 
 验证表头：
 
