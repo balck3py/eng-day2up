@@ -1,7 +1,8 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { createServerSupabase } from '@/lib/supabase/server'
 import { createAdminSupabase } from '@/lib/supabase/admin'
 import { lookupWord } from '@/lib/dict/lookup'
+import { refreshPhonetics } from '@/lib/dict/dictapi'
 
 export async function GET(
   _request: Request,
@@ -26,6 +27,15 @@ export async function GET(
 
   // 用 admin 客户端是因为需要写 dict_cache（RLS 只允许登录用户读）
   const db = createAdminSupabase()
-  const detail = await lookupWord(db, decoded)
+  const { detail, refreshPhoneticsKey } = await lookupWord(db, decoded)
+
+  // 音标未缓存时不阻塞响应：查询链路已同步读过 dict_cache 未命中，
+  // 这里把抓取丢到响应送出之后执行，写入 dict_cache 供下次查询命中。
+  // 用 after() 而不是裸 fire-and-forget，是因为 serverless 环境下
+  // 不被等待的 Promise 可能在响应送出后就被回收，抓取任务会中途夭折。
+  if (refreshPhoneticsKey) {
+    after(() => refreshPhonetics(db, refreshPhoneticsKey))
+  }
+
   return NextResponse.json(detail)
 }

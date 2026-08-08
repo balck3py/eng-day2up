@@ -2,14 +2,22 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // 三个依赖全部 mock：createServerSupabase / createAdminSupabase / lookupWord。
 // 不需要网络，也不依赖 dict_entries 是否已导入数据。
-const { getUserMock, createAdminMock, lookupWordMock } = vi.hoisted(() => ({
+const { getUserMock, createAdminMock, lookupWordMock, refreshPhoneticsMock, afterMock } = vi.hoisted(() => ({
   getUserMock: vi.fn(),
   createAdminMock: vi.fn(() => ({ __fake: 'admin-db' })),
   lookupWordMock: vi.fn(async (_db: unknown, raw: string) => ({
-    query: raw, word: raw.toLowerCase(), matchedFrom: 'none' as const,
-    phonetic: null, phoneticUs: null, phoneticUk: null, audioUs: null, audioUk: null,
-    senses: [], tags: [], collins: null, oxford: false,
+    detail: {
+      query: raw, word: raw.toLowerCase(), matchedFrom: 'none' as const,
+      phonetic: null, phoneticUs: null, phoneticUk: null, audioUs: null, audioUk: null,
+      senses: [], tags: [], collins: null, oxford: false,
+    },
+    refreshPhoneticsKey: null as string | null,
   })),
+  refreshPhoneticsMock: vi.fn(async () => {}),
+  // 真实 after() 在请求作用域之外调用会抛错（见 next/dist/server/after/after.js），
+  // 单测里直接调用 GET() 没有那层请求上下文，所以这里换成同步执行回调的桩，
+  // 只验证「传给 after 的回调做了什么」，不验证 Next 的调度时机本身。
+  afterMock: vi.fn((task: () => unknown) => task()),
 }))
 
 vi.mock('@/lib/supabase/server', () => ({
@@ -19,6 +27,11 @@ vi.mock('@/lib/supabase/admin', () => ({
   createAdminSupabase: createAdminMock,
 }))
 vi.mock('@/lib/dict/lookup', () => ({ lookupWord: lookupWordMock }))
+vi.mock('@/lib/dict/dictapi', () => ({ refreshPhonetics: refreshPhoneticsMock }))
+vi.mock('next/server', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('next/server')>()
+  return { ...actual, after: afterMock }
+})
 
 import { GET } from './route'
 
@@ -33,6 +46,8 @@ beforeEach(() => {
   getUserMock.mockReset()
   createAdminMock.mockClear()
   lookupWordMock.mockClear()
+  refreshPhoneticsMock.mockClear()
+  afterMock.mockClear()
 })
 
 describe('GET /api/word/[word]', () => {
@@ -85,5 +100,33 @@ describe('GET /api/word/[word]', () => {
     const body = await res.json()
     expect(body.query).toBe('foo+bar baz')
     expect(lookupWordMock).toHaveBeenCalledWith({ __fake: 'admin-db' }, 'foo+bar baz')
+  })
+
+  it('音标缓存命中（refreshPhoneticsKey 为 null）时不调用 after()，不触发补抓', async () => {
+    getUserMock.mockResolvedValueOnce(AUTHED)
+    // 默认 mock 已经返回 refreshPhoneticsKey: null
+    const res = await GET(new Request('http://x/api/word/apple'), ctx('apple'))
+    expect(res.status).toBe(200)
+    expect(afterMock).not.toHaveBeenCalled()
+    expect(refreshPhoneticsMock).not.toHaveBeenCalled()
+  })
+
+  it('音标未缓存（refreshPhoneticsKey 非 null）时用 after() 调度 refreshPhonetics，且不阻塞响应体', async () => {
+    getUserMock.mockResolvedValueOnce(AUTHED)
+    lookupWordMock.mockResolvedValueOnce({
+      detail: {
+        query: 'newword', word: 'newword', matchedFrom: 'none' as const,
+        phonetic: null, phoneticUs: null, phoneticUk: null, audioUs: null, audioUk: null,
+        senses: [], tags: [], collins: null, oxford: false,
+      },
+      refreshPhoneticsKey: 'newword',
+    })
+    const res = await GET(new Request('http://x/api/word/newword'), ctx('newword'))
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    // 响应体本身不应等待 refreshPhonetics —— 音标字段仍是空的
+    expect(body.phoneticUs).toBeNull()
+    expect(afterMock).toHaveBeenCalledTimes(1)
+    expect(refreshPhoneticsMock).toHaveBeenCalledWith({ __fake: 'admin-db' }, 'newword')
   })
 })

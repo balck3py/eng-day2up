@@ -2,8 +2,19 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { normalizeWord } from '@/lib/text/normalize'
 import { parseTranslation } from './senses'
 import { stripSuffixCandidates } from './inflect'
-import { getPhonetics } from './dictapi'
-import type { MatchSource, WordDetail } from './types'
+import { readCachedPhonetics } from './dictapi'
+import type { MatchSource, PhoneticSet, WordDetail } from './types'
+
+const EMPTY_PHONETICS: PhoneticSet = {
+  phoneticUs: null, phoneticUk: null, audioUs: null, audioUk: null,
+}
+
+/** lookupWord 的返回值：查询结果 + 需要在响应后台补抓音标的词（无需补抓则为 null）。 */
+export interface LookupResult {
+  detail: WordDetail
+  /** 供调用方传给 after() 里的 refreshPhonetics；命中缓存或空输入时为 null。 */
+  refreshPhoneticsKey: string | null
+}
 
 const ENTRY_COLUMNS = 'word, phonetic, translation, collins, oxford, tag'
 
@@ -53,7 +64,7 @@ function pickInOrder(orderedKeys: string[], rows: EntryRow[]): EntryRow | null {
 
 function build(
   query: string, key: string, entry: EntryRow | null,
-  matchedFrom: MatchSource, phonetics: Awaited<ReturnType<typeof getPhonetics>>,
+  matchedFrom: MatchSource, phonetics: PhoneticSet,
 ): WordDetail {
   return {
     query,
@@ -72,37 +83,61 @@ function build(
 }
 
 /**
+ * 组装最终结果：只读 dict_cache（一次数据库往返，不等网络），命中就用，
+ * 未命中就先用空音标应答，并把 phoneticsKey 报给调用方，由 route.ts 在
+ * after() 里补抓、写回缓存。
+ */
+async function withPhonetics(
+  db: SupabaseClient, raw: string, key: string, entry: EntryRow | null,
+  matchedFrom: MatchSource, phoneticsKey: string,
+): Promise<LookupResult> {
+  const cached = await readCachedPhonetics(db, phoneticsKey)
+  return {
+    detail: build(raw, key, entry, matchedFrom, cached ?? EMPTY_PHONETICS),
+    refreshPhoneticsKey: cached ? null : phoneticsKey,
+  }
+}
+
+/**
  * 四级降级查询：精确 → 词形还原 → 后缀规则 → 未命中。
- * 任一级命中即停；无论结果如何都会补充在线音标。
+ * 任一级命中即停；无论结果如何都会尝试补充在线音标（缓存命中则同步返回，
+ * 未命中则空音标应答 + 报告需要后台补抓的词）。
  */
 export async function lookupWord(
   db: SupabaseClient, raw: string,
-): Promise<WordDetail> {
+): Promise<LookupResult> {
   const key = normalizeWord(raw)
   if (!key) {
     // 空键不查库也不调在线 API —— 否则会往 dict_cache 写一条 word_key='' 的垃圾负缓存
-    return build(raw, '', null, 'none', {
-      phoneticUs: null, phoneticUk: null, audioUs: null, audioUk: null,
-    })
+    return {
+      detail: build(raw, '', null, 'none', EMPTY_PHONETICS),
+      refreshPhoneticsKey: null,
+    }
   }
 
+  // 第一级（精确）与第二级（词形还原）互不依赖，并行发起以省一次往返。
+  // exact 命中时 lemma 结果直接丢弃；并行只改变何时发起查询，
+  // 绝不改变降级优先级 —— exact 仍优先于 lemma，lemma 仍优先于 suffix。
+  const [exact, lemmas] = await Promise.all([
+    findEntries(db, [key]),
+    findLemmas(db, key),
+  ])
+
   // 第一级：精确命中
-  const exact = await findEntries(db, [key])
   if (exact.length > 0) {
-    return build(raw, key, exact[0], 'exact', await getPhonetics(db, key))
+    return withPhonetics(db, raw, key, exact[0], 'exact', key)
   }
 
   // 第二级：dict_lemma 词形还原
   // 同一个 form 可能对应多个 lemma（如 saw → see / saw），且没有词性
   // 上下文时无法可靠判断哪个更贴切；这里按字典序排序作为确定性兜底，
   // 保证同一输入每次都得到同一结果，而不是依赖数据库的返回行序。
-  const lemmas = await findLemmas(db, key)
   if (lemmas.length > 0) {
     const orderedLemmas = [...lemmas].sort()
     const viaLemma = await findEntries(db, orderedLemmas)
     const hit = pickInOrder(orderedLemmas, viaLemma)
     if (hit) {
-      return build(raw, hit.word, hit, 'lemma', await getPhonetics(db, hit.word))
+      return withPhonetics(db, raw, hit.word, hit, 'lemma', hit.word)
     }
   }
 
@@ -113,9 +148,9 @@ export async function lookupWord(
   const viaSuffix = await findEntries(db, candidates)
   const suffixHit = pickInOrder(candidates, viaSuffix)
   if (suffixHit) {
-    return build(raw, suffixHit.word, suffixHit, 'suffix', await getPhonetics(db, suffixHit.word))
+    return withPhonetics(db, raw, suffixHit.word, suffixHit, 'suffix', suffixHit.word)
   }
 
-  // 第四级：未命中，仍返回在线音标
-  return build(raw, key, null, 'none', await getPhonetics(db, key))
+  // 第四级：未命中，仍尝试返回音标（缓存命中则同步返回，否则后台补抓）
+  return withPhonetics(db, raw, key, null, 'none', key)
 }
