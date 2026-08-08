@@ -1,55 +1,96 @@
 'use client'
 
+import { useEffect, useRef, useState } from 'react'
 import type { WordDetail } from '@/lib/dict/types'
+import { pronounce, type Accent } from '@/lib/audio/pronounce'
 
-function playAudio(url: string) {
-  // Audio.play() 返回 Promise，浏览器拦截自动播放或资源 404 时会 reject，
-  // 不 catch 会在控制台抛出未处理的 rejection。
-  void new Audio(url).play().catch(() => {})
-}
+const FAIL_MESSAGE_MS = 4000
+
+type PlayState = 'idle' | 'loading' | 'failed'
 
 function Pronunciation({
   label,
   phonetic,
-  audio,
+  word,
+  accent,
 }: {
   label: string
   phonetic: string | null
-  audio: string | null
+  word: string
+  accent: Accent
 }) {
-  if (!phonetic && !audio) return null
+  const [state, setState] = useState<PlayState>('idle')
+  const mountedRef = useRef(true)
+  const failTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    // 在开发模式的 StrictMode 下，effect 会先「假卸载」再「真挂载」一次：
+    // 光在 cleanup 里把 ref 置 false 不够，setup 里必须把它重新置回 true，
+    // 否则真正挂载完成后 mountedRef 会永远停留在 false，
+    // 导致 pronounce() 一 resolve 就被当成「已卸载」而永远不更新按钮状态。
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      if (failTimerRef.current) clearTimeout(failTimerRef.current)
+    }
+  }, [])
+
+  async function handleClick() {
+    // 忽略连续点击：上一次播放请求还在进行时不重复发起，避免排队堆积。
+    if (state === 'loading') return
+
+    if (failTimerRef.current) {
+      clearTimeout(failTimerRef.current)
+      failTimerRef.current = null
+    }
+    setState('loading')
+
+    const result = await pronounce(word, accent)
+
+    // 组件已卸载（比如用户已经切走这个词）就不再碰 state。
+    if (!mountedRef.current) return
+
+    if (result === 'failed') {
+      setState('failed')
+      failTimerRef.current = setTimeout(() => {
+        if (mountedRef.current) setState('idle')
+      }, FAIL_MESSAGE_MS)
+    } else {
+      setState('idle')
+    }
+  }
+
   return (
     <span className="inline-flex items-center gap-1.5">
       {label && <span className="text-xs text-ink-2">{label}</span>}
       {phonetic && (
         <span className="font-mono text-[0.9rem] text-ink">{phonetic}</span>
       )}
-      {audio && (
-        <button
-          type="button"
-          aria-label={`播放${label}发音`}
-          onClick={() => playAudio(audio)}
-          className="rounded text-ink-2 hover:text-ink"
-        >
-          🔊
-        </button>
+      <button
+        type="button"
+        aria-label={`播放${label}发音`}
+        aria-busy={state === 'loading'}
+        disabled={state === 'loading'}
+        onClick={handleClick}
+        className="rounded text-ink-2 hover:text-ink disabled:opacity-60"
+      >
+        {state === 'loading' ? '🔊…' : '🔊'}
+      </button>
+      {state === 'failed' && (
+        <span className="text-xs text-ink-3">发音加载失败</span>
       )}
     </span>
   )
 }
 
 export function WordCard({ detail }: { detail: WordDetail }) {
-  const bothSame =
-    detail.phoneticUs !== null && detail.phoneticUs === detail.phoneticUk
   const isLemma =
     detail.matchedFrom === 'lemma' || detail.matchedFrom === 'suffix'
   const hasBadges = detail.tags.length > 0 || detail.oxford || !!detail.collins
-  const hasPronunciation =
-    !!detail.phoneticUs ||
-    !!detail.phoneticUk ||
-    !!detail.audioUs ||
-    !!detail.audioUk ||
-    !!detail.phonetic
+  // 发音按钮不依赖 dictionaryapi.dev 的音标/音频数据——有道和本地合成都只需要
+  // 词本身。只要查到了词（detail.word 恒非空），就允许发音。
+  const fallbackPhonetic =
+    !detail.phoneticUs && !detail.phoneticUk ? detail.phonetic : null
 
   return (
     <article className="word-card-enter rounded-[10px] border border-rule bg-card p-5 shadow-[0_1px_2px_rgba(20,33,61,0.04)] sm:p-6">
@@ -63,36 +104,26 @@ export function WordCard({ detail }: { detail: WordDetail }) {
         {detail.word}
       </h2>
 
-      {hasPronunciation && (
-        <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1">
-          {bothSame ? (
-            <Pronunciation
-              label=""
-              phonetic={detail.phoneticUs}
-              audio={detail.audioUs ?? detail.audioUk}
-            />
-          ) : (
-            <>
-              <Pronunciation
-                label="美"
-                phonetic={detail.phoneticUs}
-                audio={detail.audioUs}
-              />
-              <Pronunciation
-                label="英"
-                phonetic={detail.phoneticUk}
-                audio={detail.audioUk}
-              />
-            </>
-          )}
-          {/* 在线音标全缺失时，回落到 ECDICT 的单一音标 */}
-          {!detail.phoneticUs && !detail.phoneticUk && detail.phonetic && (
-            <span className="font-mono text-[0.9rem] text-ink">
-              {detail.phonetic}
-            </span>
-          )}
-        </div>
-      )}
+      <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1">
+        <Pronunciation
+          label="美式"
+          phonetic={detail.phoneticUs}
+          word={detail.word}
+          accent="us"
+        />
+        <Pronunciation
+          label="英式"
+          phonetic={detail.phoneticUk}
+          word={detail.word}
+          accent="uk"
+        />
+        {/* 在线音标全缺失时，回落到 ECDICT 的单一音标（仅展示，不影响发音按钮） */}
+        {fallbackPhonetic && (
+          <span className="font-mono text-[0.9rem] text-ink">
+            {fallbackPhonetic}
+          </span>
+        )}
+      </div>
 
       {hasBadges && (
         <div className="mt-3 flex flex-wrap gap-1.5">
