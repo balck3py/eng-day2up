@@ -116,7 +116,15 @@ begin
 end;
 $$;
 
--- 匿名角色不得调用：auth.uid() 为 null 时上面的校验不生效，
+-- 匿名角色不得调用：auth.uid() 为 null 时函数内的身份校验不生效，
 -- 否则未登录者只要知道某个 user id 就能刷满他的配额。
--- 登录用户保留权限（受函数内校验约束，只能操作自己）；service_role 不受影响。
-revoke execute on function increment_usage(uuid, int) from anon;
+--
+-- ⚠️ 必须先从 PUBLIC 撤销。Postgres 的 CREATE FUNCTION 默认
+--    GRANT EXECUTE TO PUBLIC，而 anon 是通过 PUBLIC 继承到该权限的，
+--    只写 `revoke ... from anon` 完全无效 —— 实测验证过：撤销后匿名调用
+--    依然能进入函数体（返回外键错误而非权限拒绝）。
+--    从 PUBLIC 撤销会一并切断 authenticated / service_role，所以要显式授回。
+revoke all on function increment_usage(uuid, int) from public;
+revoke all on function increment_usage(uuid, int) from anon;
+grant execute on function increment_usage(uuid, int) to authenticated;
+grant execute on function increment_usage(uuid, int) to service_role;

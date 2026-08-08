@@ -30,22 +30,25 @@ import io
 import os
 import sys
 import time
-import zipfile
 from pathlib import Path
 from typing import Iterator
 
 import httpx
 
-# ECDICT 1.0.28 的 release 里没有 CSV 包，stardict 包内即为 stardict.csv
+# 数据源踩坑记录（2026-08-07 实测）：
+#   1. 计划原文的 ecdict-csv-28.zip           → 404，该资产不存在
+#   2. release 里的 ecdict-stardict-28.zip    → 是 StarDict 二进制格式
+#                                               (.dict/.idx/.ifo)，不是 CSV
+#   3. 仓库根目录的 ecdict.csv                → ✅ 就是要的 CSV，66MB，无需解压
+# 列结构已实测：word,phonetic,definition,translation,pos,collins,oxford,
+#              tag,bnc,frq,exchange,detail,audio
 ECDICT_URL = (
-    "https://github.com/skywind3000/ECDICT/releases/download/1.0.28/"
-    "ecdict-stardict-28.zip"
+    "https://raw.githubusercontent.com/skywind3000/ECDICT/master/ecdict.csv"
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = REPO_ROOT / "data"
-ZIP_PATH = DATA_DIR / "ecdict-stardict.zip"
-CSV_PATH = DATA_DIR / "stardict.csv"
+CSV_PATH = DATA_DIR / "ecdict.csv"
 
 BATCH = 1000
 # dict_entries 的列，顺序与建表一致（word_key 是生成列，不写入）
@@ -190,63 +193,70 @@ def run_self_test() -> bool:
 # ---------------------------------------------------------------- 下载解压
 
 
-def is_valid_zip(path: Path) -> bool:
-    """校验是不是一个完整可读的 zip —— 光看文件大小会把中断的半截下载当成有效缓存。"""
-    if not path.exists() or path.stat().st_size < 1_000_000:
+EXPECTED_HEADER = (
+    "word,phonetic,definition,translation,pos,collins,oxford,"
+    "tag,bnc,frq,exchange,detail,audio"
+)
+
+
+def is_valid_csv(path: Path) -> bool:
+    """
+    校验是不是完整的 ECDICT CSV。
+    只看文件大小会把中断的半截下载当成有效缓存 —— 实际踩过这个坑，
+    所以同时校验表头与结尾是否是完整的一行。
+    """
+    if not path.exists() or path.stat().st_size < 10_000_000:
         return False
-    try:
-        with zipfile.ZipFile(path) as z:
-            return z.testzip() is None and bool(z.namelist())
-    except zipfile.BadZipFile:
-        return False
+    with open(path, "rb") as f:
+        if not f.readline().decode("utf-8", "replace").strip().startswith("word,phonetic"):
+            return False
+        f.seek(max(0, path.stat().st_size - 2))
+        return f.read().endswith(b"\n")
 
 
 def download() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    if is_valid_zip(ZIP_PATH):
-        print(f"已存在完整的 {ZIP_PATH.name}"
-              f"（{ZIP_PATH.stat().st_size / 1e6:.1f} MB），跳过下载")
+    if is_valid_csv(CSV_PATH):
+        print(f"已存在完整的 {CSV_PATH.name}"
+              f"（{CSV_PATH.stat().st_size / 1e6:.1f} MB），跳过下载")
         return
-    if ZIP_PATH.exists():
-        print(f"⚠️ {ZIP_PATH.name} 不是完整的 zip（可能是中断的下载），删除重下")
-        ZIP_PATH.unlink()
+    if CSV_PATH.exists():
+        print(f"⚠️ {CSV_PATH.name} 不完整（可能是中断的下载），删除重下")
+        CSV_PATH.unlink()
 
     print(f"下载 {ECDICT_URL}")
+    tmp = CSV_PATH.with_suffix(".csv.part")
     with httpx.stream("GET", ECDICT_URL, follow_redirects=True, timeout=120) as r:
         r.raise_for_status()
         total = int(r.headers.get("content-length", 0))
         done = 0
         last = 0.0
-        with open(ZIP_PATH, "wb") as f:
+        with open(tmp, "wb") as f:
             for chunk in r.iter_bytes(1 << 16):
                 f.write(chunk)
                 done += len(chunk)
                 now = time.time()
-                if now - last > 0.5:
+                if now - last > 2:
                     pct = f"{done / total * 100:5.1f}%" if total else "  ?  "
                     print(f"\r  {pct}  {done / 1e6:7.1f} MB", end="", flush=True)
                     last = now
+    # 下载完整才改名，避免半截文件被下次运行当成有效缓存
+    tmp.rename(CSV_PATH)
     print(f"\r  100.0%  {done / 1e6:7.1f} MB  下载完成")
 
 
-def extract() -> None:
-    if CSV_PATH.exists() and CSV_PATH.stat().st_size > 1_000_000:
-        print(f"已存在 {CSV_PATH.name}（{CSV_PATH.stat().st_size / 1e6:.1f} MB），跳过解压")
-        return
-
-    print(f"解压 {ZIP_PATH.name}")
-    with zipfile.ZipFile(ZIP_PATH) as z:
-        names = z.namelist()
-        print(f"  包内文件：{names}")
-        csvs = [n for n in names if n.lower().endswith(".csv")]
-        if not csvs:
-            raise SystemExit(f"❌ 压缩包内没有 CSV 文件，实际内容：{names}")
-        src = max(csvs, key=lambda n: z.getinfo(n).file_size)
-        print(f"  提取 {src}（{z.getinfo(src).file_size / 1e6:.1f} MB）")
-        with z.open(src) as fin, open(CSV_PATH, "wb") as fout:
-            while chunk := fin.read(1 << 20):
-                fout.write(chunk)
-    print(f"  解压完成 → {CSV_PATH.name}（{CSV_PATH.stat().st_size / 1e6:.1f} MB）")
+def verify_header() -> None:
+    with open(CSV_PATH, "r", encoding="utf-8") as f:
+        header = f.readline().strip()
+    if header != EXPECTED_HEADER:
+        print(f"⚠️ 表头与预期不符\n  预期: {EXPECTED_HEADER}\n  实得: {header}")
+        missing = {"word", "translation", "exchange", "frq", "bnc",
+                   "collins", "oxford", "tag"} - set(header.split(","))
+        if missing:
+            raise SystemExit(f"❌ 缺少必需列: {sorted(missing)}")
+        print("  必需列齐全，继续。")
+    else:
+        print(f"✅ 表头符合预期（{CSV_PATH.stat().st_size / 1e6:.1f} MB）")
 
 
 # ---------------------------------------------------------------- 写库
@@ -351,7 +361,7 @@ def main() -> None:
 
     if not args.skip_download:
         download()
-    extract()
+    verify_header()
 
     db = None if args.dry_run else Supabase()
     if db:
