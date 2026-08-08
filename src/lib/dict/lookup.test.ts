@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { lookupWord } from './lookup'
+import { getPhonetics } from './dictapi'
 
 vi.mock('./dictapi', () => ({
   getPhonetics: vi.fn(async () => ({
@@ -8,6 +9,8 @@ vi.mock('./dictapi', () => ({
     audioUs: 'a-us.mp3', audioUk: 'a-uk.mp3',
   })),
 }))
+
+const mockedGetPhonetics = vi.mocked(getPhonetics)
 
 type EntryRow = {
   word: string; phonetic: string | null; translation: string | null
@@ -44,6 +47,43 @@ function fakeDb(entries: Record<string, EntryRow>, lemmas: Record<string, string
   } as unknown as SupabaseClient
 }
 
+/**
+ * 与 fakeDb 类似，但 dict_entries 的 `.in()` 永远按 `rowOrder` 里的顺序
+ * 返回命中行，忽略调用方传入的 keys 顺序——用来模拟真实 Postgres 不保证
+ * IN 查询返回行序与查询列表顺序一致的情况，验证 lookupWord 不依赖行序，
+ * 而是依赖候选优先级（stripSuffixCandidates 的顺序 / lemma 的字典序）。
+ */
+function fakeDbScrambled(
+  entries: Record<string, EntryRow>,
+  lemmas: Record<string, string[]>,
+  rowOrder: string[],
+) {
+  return {
+    from(table: string) {
+      if (table === 'dict_entries') {
+        return {
+          select: () => ({
+            in: (_col: string, keys: string[]) => Promise.resolve({
+              data: rowOrder.filter((k) => keys.includes(k) && entries[k]).map((k) => entries[k]),
+              error: null,
+            }),
+          }),
+        }
+      }
+      if (table === 'dict_lemma') {
+        return {
+          select: () => ({
+            eq: (_col: string, form: string) => Promise.resolve({
+              data: (lemmas[form] ?? []).map((lemma) => ({ lemma })), error: null,
+            }),
+          }),
+        }
+      }
+      throw new Error(`未预期的表: ${table}`)
+    },
+  } as unknown as SupabaseClient
+}
+
 const APPLE: EntryRow = {
   word: 'apple', phonetic: '/ˈæpl/', translation: 'n. 苹果\nn. 苹果树',
   collins: 5, oxford: 1, tag: 'zk gk cet4',
@@ -55,6 +95,22 @@ const SAY: EntryRow = {
 const RUN: EntryRow = {
   word: 'run', phonetic: '/rʌn/', translation: 'vi. 跑', collins: 5,
   oxford: 1, tag: '',
+}
+const CARE: EntryRow = {
+  word: 'care', phonetic: '/keər/', translation: 'vi. 关心', collins: 5,
+  oxford: 1, tag: 'zk',
+}
+const CAR: EntryRow = {
+  word: 'car', phonetic: '/kɑːr/', translation: 'n. 汽车', collins: 5,
+  oxford: 1, tag: 'zk',
+}
+const STUDY: EntryRow = {
+  word: 'study', phonetic: '/ˈstʌdi/', translation: 'v. 学习', collins: 3,
+  oxford: 0, tag: '',
+}
+const WORK: EntryRow = {
+  word: 'work', phonetic: '/wɜːk/', translation: 'vi. 工作', collins: 3,
+  oxford: 0, tag: '',
 }
 
 describe('lookupWord', () => {
@@ -88,6 +144,56 @@ describe('lookupWord', () => {
     const r = await lookupWord(db, 'running')
     expect(r.matchedFrom).toBe('suffix')
     expect(r.word).toBe('run')
+  })
+
+  it('第三级：单一候选命中不受排序调整影响（studies → study）', async () => {
+    const db = fakeDb({ study: STUDY }, {})
+    const r = await lookupWord(db, 'studies')
+    expect(r.matchedFrom).toBe('suffix')
+    expect(r.word).toBe('study')
+  })
+
+  it('第三级：单一候选命中不受排序调整影响（worked → work）', async () => {
+    const db = fakeDb({ work: WORK }, {})
+    const r = await lookupWord(db, 'worked')
+    expect(r.matchedFrom).toBe('suffix')
+    expect(r.word).toBe('work')
+  })
+
+  it('第三级：多个候选都是真词时优先取哑音 e 还原（caring → care，而不是 car），且不依赖数据库返回行序', async () => {
+    // 刻意让数据库先返回 car 这一行，验证代码是按 stripSuffixCandidates
+    // 的候选优先级挑赢家，而不是直接取查询结果的第一行。
+    const db = fakeDbScrambled({ car: CAR, care: CARE }, {}, ['car', 'care'])
+    const r = await lookupWord(db, 'caring')
+    expect(r.matchedFrom).toBe('suffix')
+    expect(r.word).toBe('care')
+  })
+
+  it('第三级：过去式候选同理（cared → care，而不是 car），且不依赖数据库返回行序', async () => {
+    const db = fakeDbScrambled({ car: CAR, care: CARE }, {}, ['car', 'care'])
+    const r = await lookupWord(db, 'cared')
+    expect(r.matchedFrom).toBe('suffix')
+    expect(r.word).toBe('care')
+  })
+
+  it('第三级：命中后用的是解析出的原型词去查在线音标，而不是原始输入', async () => {
+    const db = fakeDbScrambled({ car: CAR, care: CARE }, {}, ['car', 'care'])
+    await lookupWord(db, 'caring')
+    expect(mockedGetPhonetics).toHaveBeenCalledWith(db, 'care')
+    expect(mockedGetPhonetics).not.toHaveBeenCalledWith(db, 'caring')
+  })
+
+  it('第二级：一个 form 对应多个 lemma 时按字典序取最小者作为确定性选择，且不依赖数据库返回行序', async () => {
+    // dict_lemma 对 'foo' 给出两个 lemma；数据库先返回 run 这一行，
+    // 验证代码取的是排序后的 apple（'apple' < 'run'），而不是行序里的第一行。
+    const db = fakeDbScrambled(
+      { apple: APPLE, run: RUN },
+      { foo: ['run', 'apple'] },
+      ['run', 'apple'],
+    )
+    const r = await lookupWord(db, 'foo')
+    expect(r.matchedFrom).toBe('lemma')
+    expect(r.word).toBe('apple')
   })
 
   it('第四级：全部未命中', async () => {

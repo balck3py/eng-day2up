@@ -29,6 +29,28 @@ async function findLemmas(db: SupabaseClient, form: string): Promise<string[]> {
   return ((data ?? []) as { lemma: string }[]).map((r) => r.lemma)
 }
 
+/**
+ * 从一批候选 key（已按调用方期望的优先级排好序）里，选出第一个能在
+ * `rows` 里找到匹配行的那个，而不是简单取 `rows[0]`。
+ *
+ * `dict_entries` 的 `word_key` 是 `lower(word)` 生成列，所以用
+ * `entry.word.toLowerCase()` 反查回候选 key 是可靠的。
+ *
+ * 这存在的意义：一次 `IN` 查询可能同时命中多个真实存在的候选词
+ * （例如 caring 的后缀候选 car / care 都是真词），此时 Postgres
+ * 不保证返回行序与 IN 列表顺序一致，直接取第一行会让同一输入偶尔
+ * 给出不同、且可能错误的答案（caring → car 而不是 care）。按候选
+ * 优先级顺序去找，结果才是确定性的。
+ */
+function pickInOrder(orderedKeys: string[], rows: EntryRow[]): EntryRow | null {
+  const byKey = new Map(rows.map((r) => [r.word.toLowerCase(), r] as const))
+  for (const key of orderedKeys) {
+    const hit = byKey.get(key)
+    if (hit) return hit
+  }
+  return null
+}
+
 function build(
   query: string, key: string, entry: EntryRow | null,
   matchedFrom: MatchSource, phonetics: Awaited<ReturnType<typeof getPhonetics>>,
@@ -71,21 +93,27 @@ export async function lookupWord(
   }
 
   // 第二级：dict_lemma 词形还原
+  // 同一个 form 可能对应多个 lemma（如 saw → see / saw），且没有词性
+  // 上下文时无法可靠判断哪个更贴切；这里按字典序排序作为确定性兜底，
+  // 保证同一输入每次都得到同一结果，而不是依赖数据库的返回行序。
   const lemmas = await findLemmas(db, key)
   if (lemmas.length > 0) {
-    const viaLemma = await findEntries(db, lemmas)
-    if (viaLemma.length > 0) {
-      const hit = viaLemma[0]
+    const orderedLemmas = [...lemmas].sort()
+    const viaLemma = await findEntries(db, orderedLemmas)
+    const hit = pickInOrder(orderedLemmas, viaLemma)
+    if (hit) {
       return build(raw, hit.word, hit, 'lemma', await getPhonetics(db, hit.word))
     }
   }
 
   // 第三级：后缀规则兜底
+  // stripSuffixCandidates 按语言学上更可能的原型降序排列（如 caring 的
+  // care 排在 car 之前），必须按这个顺序挑赢家，不能取查询返回的第一行。
   const candidates = stripSuffixCandidates(key)
   const viaSuffix = await findEntries(db, candidates)
-  if (viaSuffix.length > 0) {
-    const hit = viaSuffix[0]
-    return build(raw, hit.word, hit, 'suffix', await getPhonetics(db, hit.word))
+  const suffixHit = pickInOrder(candidates, viaSuffix)
+  if (suffixHit) {
+    return build(raw, suffixHit.word, suffixHit, 'suffix', await getPhonetics(db, suffixHit.word))
   }
 
   // 第四级：未命中，仍返回在线音标

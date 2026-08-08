@@ -54,4 +54,16 @@ describe('stripSuffixCandidates', () => {
   it('大写输入按小写处理', () => {
     expect(stripSuffixCandidates('Running')).toContain('run')
   })
+  it('候选顺序：哑音 e 还原（现在分词）排在直接去后缀之前，caring → care 先于 car', () => {
+    const out = stripSuffixCandidates('caring')
+    expect(out.indexOf('care')).toBeLessThan(out.indexOf('car'))
+  })
+  it('候选顺序：哑音 e 还原（过去式）排在直接去后缀之前，cared → care 先于 car', () => {
+    const out = stripSuffixCandidates('cared')
+    expect(out.indexOf('care')).toBeLessThan(out.indexOf('car'))
+  })
+  it('候选顺序：双写辅音还原排在未变形词干之前，running → run 先于 runn', () => {
+    const out = stripSuffixCandidates('running')
+    expect(out.indexOf('run')).toBeLessThan(out.indexOf('runn'))
+  })
 })
