@@ -4,8 +4,11 @@
   --paper: #F5F7FA;
   --card: #FFFFFF;
   --ink: #14213D;
-  --ink-2: #5B6B8C;
-  --ink-3: #8894AC;
+  /* ink-2/ink-3 调整自设计规范初稿：原值在 --paper 上分别约 4.9:1 / 2.85:1，
+     后者不达 WCAG AA 正文 4.5:1 门槛。以下数值经 Bash 校验（相对亮度公式），
+     浅色 ink-3 on paper ≈5.06:1 / on card ≈5.43:1，均达标，见 task-13 修复报告。 */
+  --ink-2: #47567A;
+  --ink-3: #5C6A87;
   --rule: #DDE3EC;
   --seal: #A8324A;
   --jade: #2E6F5E;
@@ -31,8 +34,10 @@
     --paper: #10141C;
     --card: #171D28;
     --ink: #E8ECF3;
-    --ink-2: #9AA7BF;
-    --ink-3: #6B7890;
+    /* 同上，深色 ink-3 on card 原值约 4.14:1 不达标；调整后 on paper ≈5.11:1 /
+       on card ≈4.68:1，均达标。 */
+    --ink-2: #A8B4CC;
+    --ink-3: #7A87A3;
     --rule: #2A3342;
     --seal: #E0708A;
     --jade: #5FB89C;

@@ -44,6 +44,12 @@ export function WordCard({ detail }: { detail: WordDetail }) {
   const isLemma =
     detail.matchedFrom === 'lemma' || detail.matchedFrom === 'suffix'
   const hasBadges = detail.tags.length > 0 || detail.oxford || !!detail.collins
+  const hasPronunciation =
+    !!detail.phoneticUs ||
+    !!detail.phoneticUk ||
+    !!detail.audioUs ||
+    !!detail.audioUk ||
+    !!detail.phonetic
 
   return (
     <article className="word-card-enter rounded-[10px] border border-rule bg-card p-5 shadow-[0_1px_2px_rgba(20,33,61,0.04)] sm:p-6">
@@ -57,34 +63,36 @@ export function WordCard({ detail }: { detail: WordDetail }) {
         {detail.word}
       </h2>
 
-      <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1">
-        {bothSame ? (
-          <Pronunciation
-            label=""
-            phonetic={detail.phoneticUs}
-            audio={detail.audioUs ?? detail.audioUk}
-          />
-        ) : (
-          <>
+      {hasPronunciation && (
+        <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1">
+          {bothSame ? (
             <Pronunciation
-              label="美"
+              label=""
               phonetic={detail.phoneticUs}
-              audio={detail.audioUs}
+              audio={detail.audioUs ?? detail.audioUk}
             />
-            <Pronunciation
-              label="英"
-              phonetic={detail.phoneticUk}
-              audio={detail.audioUk}
-            />
-          </>
-        )}
-        {/* 在线音标全缺失时，回落到 ECDICT 的单一音标 */}
-        {!detail.phoneticUs && !detail.phoneticUk && detail.phonetic && (
-          <span className="font-mono text-[0.9rem] text-ink">
-            {detail.phonetic}
-          </span>
-        )}
-      </div>
+          ) : (
+            <>
+              <Pronunciation
+                label="美"
+                phonetic={detail.phoneticUs}
+                audio={detail.audioUs}
+              />
+              <Pronunciation
+                label="英"
+                phonetic={detail.phoneticUk}
+                audio={detail.audioUk}
+              />
+            </>
+          )}
+          {/* 在线音标全缺失时，回落到 ECDICT 的单一音标 */}
+          {!detail.phoneticUs && !detail.phoneticUk && detail.phonetic && (
+            <span className="font-mono text-[0.9rem] text-ink">
+              {detail.phonetic}
+            </span>
+          )}
+        </div>
+      )}
 
       {hasBadges && (
         <div className="mt-3 flex flex-wrap gap-1.5">
@@ -95,6 +103,7 @@ export function WordCard({ detail }: { detail: WordDetail }) {
           )}
           {detail.collins ? (
             <span
+              role="img"
               className="rounded-full border border-seal/30 bg-seal/10 px-2 py-0.5 text-[0.75rem] font-medium text-seal"
               aria-label={`柯林斯 ${detail.collins} 星`}
             >
@@ -117,7 +126,7 @@ export function WordCard({ detail }: { detail: WordDetail }) {
           {detail.senses.map((s, i) => (
             <li
               key={i}
-              className="grid grid-cols-[2.75rem_1px_1fr] gap-x-3 border-b border-rule py-2 sm:grid-cols-[3.5rem_1px_1fr]"
+              className="grid grid-cols-[2.75rem_1px_1fr] gap-x-3 py-2 sm:grid-cols-[3.5rem_1px_1fr]"
             >
               <span className="pt-px text-right font-mono text-[0.8125rem] text-ink-2">
                 {s.pos}
