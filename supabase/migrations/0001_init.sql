@@ -115,3 +115,8 @@ begin
   return v_count <= p_limit;
 end;
 $$;
+
+-- 匿名角色不得调用：auth.uid() 为 null 时上面的校验不生效，
+-- 否则未登录者只要知道某个 user id 就能刷满他的配额。
+-- 登录用户保留权限（受函数内校验约束，只能操作自己）；service_role 不受影响。
+revoke execute on function increment_usage(uuid, int) from anon;
