@@ -1,18 +1,26 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import { createBrowserSupabase } from '@/lib/supabase/client'
 
+// 不用 useSearchParams：它要求外层套 <Suspense>，否则会在 `next build`
+// 静态生成阶段直接报错（missing-suspense-with-csr-bailout）。用
+// useSyncExternalStore 直接读 window.location 更简单：它内置了
+// server/client 快照不一致时的正确处理（先渲染 getServerSnapshot 的
+// false，hydrate 完成后再同步成真实值），比在 effect 里 setState
+// 更符合 react-hooks/set-state-in-effect 规则，也不会有 hydration 警告。
+const noopSubscribe = () => () => {}
+function getDeniedSnapshot() {
+  return new URLSearchParams(window.location.search).get('denied') === '1'
+}
+function getDeniedServerSnapshot() {
+  return false
+}
+
 export default function LoginPage() {
-  // 不用 useSearchParams：它要求外层套 <Suspense>，否则会在 `next build`
-  // 静态生成阶段直接报错（missing-suspense-with-csr-bailout）。这个页面
-  // 本来就是纯客户端组件，直接从 window.location 读取更简单——配合下面
-  // 登录成功后改用整页跳转（而不是 router.push），每次落到这个页面都是
-  // 一次全新的 mount，这个 useEffect 才靠得住。
-  const [denied, setDenied] = useState(false)
-  useEffect(() => {
-    setDenied(new URLSearchParams(window.location.search).get('denied') === '1')
-  }, [])
+  // 配合下面登录成功后改用整页跳转（而不是 router.push）：每次落到这个
+  // 页面都是一次全新的 mount/hydrate，这个 snapshot 读取才靠得住。
+  const denied = useSyncExternalStore(noopSubscribe, getDeniedSnapshot, getDeniedServerSnapshot)
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
