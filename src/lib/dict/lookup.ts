@@ -20,14 +20,12 @@ async function findEntries(
   db: SupabaseClient, keys: string[],
 ): Promise<EntryRow[]> {
   if (keys.length === 0) return []
-  const { data, error } = await db.from('dict_entries').select(ENTRY_COLUMNS).in('word_key', keys)
-  if (error) return []
+  const { data } = await db.from('dict_entries').select(ENTRY_COLUMNS).in('word_key', keys)
   return (data ?? []) as unknown as EntryRow[]
 }
 
 async function findLemmas(db: SupabaseClient, form: string): Promise<string[]> {
-  const { data, error } = await db.from('dict_lemma').select('lemma').eq('form', form)
-  if (error) return []
+  const { data } = await db.from('dict_lemma').select('lemma').eq('form', form)
   return ((data ?? []) as { lemma: string }[]).map((r) => r.lemma)
 }
 
