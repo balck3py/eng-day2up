@@ -13,8 +13,13 @@ export async function GET(
     return NextResponse.json({ error: '未登录' }, { status: 401 })
   }
 
+  // Next 已经在路由匹配阶段对动态段做过一次 decodeURIComponent
+  // （node_modules/next/dist/shared/lib/router/utils/route-matcher.js:17-27），
+  // 这里的 word 已是解码后的值。若再解码一次，任何含字面 "%" 的输入
+  // （如 "100%"）都会因不构成合法转义序列而抛出未捕获的 URIError，
+  // 导致该路由对普通输入 500。此处只需 trim，不再二次解码。
   const { word } = await params
-  const decoded = decodeURIComponent(word ?? '').trim()
+  const decoded = (word ?? '').trim()
   if (!decoded) {
     return NextResponse.json({ error: '缺少查询词' }, { status: 400 })
   }
