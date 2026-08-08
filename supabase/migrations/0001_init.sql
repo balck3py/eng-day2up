@@ -101,6 +101,12 @@ as $$
 declare
   v_count int;
 begin
+  -- security definer 会绕过 RLS，因此必须自行校验身份：
+  -- 登录用户只能操作自己的配额；service_role 调用时 auth.uid() 为 null，放行。
+  if auth.uid() is not null and auth.uid() <> p_user then
+    raise exception '无权操作他人的配额';
+  end if;
+
   insert into usage_counter (user_id, day, count)
   values (p_user, current_date, 1)
   on conflict (user_id, day)
