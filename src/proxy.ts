@@ -52,6 +52,13 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
+  // 未配置 ALLOWED_EMAILS 时 parseAllowlist 返回 null，isEmailAllowed 对 null
+  // 一律放行——这里是故意 fail open：这是已经在跑的应用的会话层兜底，某次
+  // 部署漏配这个变量不该把所有人（包括管理员自己）锁在门外。
+  // src/app/api/auth/signup/route.ts 故意反过来 fail closed（未配置 = 拒绝
+  // 一切注册），因为那条路由是用 service_role 建号、不验证邮箱所有权的端点，
+  // fail open 在那边等于开了个无限速自动开户口子。两边不对称是有意为之，
+  // 改的时候不要为了「统一」把其中一边掰成另一边的样子。
   const allowlist = parseAllowlist(process.env.ALLOWED_EMAILS)
   if (!isEmailAllowed(user.email, allowlist)) {
     // 邮箱不在白名单：视同未登录，且必须清掉会话 cookie，否则会陷入

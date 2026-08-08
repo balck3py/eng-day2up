@@ -38,6 +38,19 @@ export async function POST(request: Request) {
   }
 
   const allowlist = parseAllowlist(process.env.ALLOWED_EMAILS)
+  // 故意跟 src/proxy.ts 不对称：那边未配置 ALLOWED_EMAILS 时是「不限制」
+  // （fail open），因为那是已经在跑的应用的兜底，漏配一次不该把所有人锁
+  // 在门外。这条路由不同——它是用 service_role 建号、不要求验证邮箱所有权
+  // 的端点，一旦意外 fail open 就等于给了任何人一个「无限速、自动确认
+  // 邮箱」的开户接口，比它取代的客户端 signUp（好歹要求收到验证邮件）还
+  // 危险。所以这里反过来：未配置白名单 = 全部拒绝，而不是不限制。
+  // 不要为了「统一」两边的行为把这条改成 fail open——那会重新打开这个洞。
+  if (allowlist === null) {
+    return NextResponse.json(
+      { error: '注册功能未配置，请联系管理员。' },
+      { status: 503 },
+    )
+  }
   if (!isEmailAllowed(trimmedEmail, allowlist)) {
     return NextResponse.json(
       { error: '该邮箱未获授权，请联系管理员开通。' },
@@ -55,9 +68,11 @@ export async function POST(request: Request) {
   })
 
   if (error) {
-    // Supabase 对重复邮箱的错误码是 email_exists（HTTP 422）。只把「已注册，
-    // 去登录」这一件事告诉用户，不透出其他内部错误信息。
-    if (error.code === 'email_exists' || error.status === 422) {
+    // 只认 email_exists 这个明确的错误码。之前还兜底判断 status === 422，
+    // 但 422 也会被其他校验失败复用（比如后台配置了更严格的密码策略），
+    // 那种情况下告诉用户「已注册，去登录」是错的、会误导人——应该走下面
+    // 的通用错误分支。
+    if (error.code === 'email_exists') {
       return NextResponse.json(
         { error: '该邮箱已注册，请直接登录。' },
         { status: 409 },
