@@ -48,16 +48,18 @@ test('单词查询显示词头与释义', async ({ page }) => {
   await page.getByRole('button', { name: '翻译' }).click()
 
   await expect(page.getByRole('heading', { name: 'apple' })).toBeVisible()
-  await expect(page.getByText('苹果')).toBeVisible()
+  // 释义有多条都含「苹果」，取第一条即可确认词典命中
+  await expect(page.getByText('苹果', { exact: false }).first()).toBeVisible()
 })
 
 test('段落翻译产出译文与难词', async ({ page }) => {
   await mainInput(page).fill(PARAGRAPH)
   await page.getByRole('button', { name: '翻译' }).click()
 
-  // 难词卡片走数据库，通常先于译文出现
+  // 难词卡片走数据库，通常先于译文出现。unprecedented 在输入框、原文段、
+  // 难词展开按钮、收藏按钮里都出现，用唯一的收藏按钮 aria-label 定位它。
   await expect(page.getByRole('heading', { name: '难词' })).toBeVisible()
-  await expect(page.getByText('unprecedented')).toBeVisible()
+  await expect(page.getByRole('button', { name: '收藏 unprecedented' })).toBeVisible()
 
   // 译文是流式的，等它攒出足够中文
   const translation = page.locator('section', { hasText: '译文' })
@@ -75,7 +77,10 @@ test('收藏后出现在单词本，可移除', async ({ page }) => {
   ).toBeVisible()
 
   await page.getByRole('link', { name: '单词本' }).click()
-  await expect(page.getByText('serendipity')).toBeVisible()
+  await page.waitForURL('**/wordbook')
+  await expect(
+    page.getByRole('listitem').filter({ hasText: 'serendipity' }),
+  ).toBeVisible()
 
   await page.getByRole('button', { name: '移除 serendipity' }).click()
   await expect(page.getByText('单词本还是空的')).toBeVisible()
