@@ -1,36 +1,45 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 翻译 · 单词本
 
-## Getting Started
+中英互译工具，翻译结果可直接沉淀为个人单词本并复习。
 
-First, run the development server:
+## 功能
+
+- 中↔英互译，自动识别单词与段落
+- 单词详情：美/英音标、发音、按词性分组的中文释义、考试标签
+- 段落自动拆解难词，难度随个人单词本自适应（已掌握的词不再出现）
+- 划词查询任意英文单词
+- 单词本收藏、搜索、移除
+- 顺序 / 随机翻卡复习
+
+## 架构
+
+- **前端 + 服务端**：Next.js App Router @ Vercel
+- **数据 + 认证**：Supabase（Postgres + Auth + RLS）
+- **词典层**：ECDICT 高频子集 + dictionaryapi.dev 音标（带缓存）
+- **翻译**：本机 ollama 主用（经 frpc + Caddy 暴露），OpenAI 兼容接口兜底
+
+词典层与 LLM 层完全解耦 —— 翻译后端全部不可用时，单词查询、单词本与复习功能照常工作。
+
+## 开发
 
 ```bash
+npm install
+cp .env.local.example .env.local   # 填入实际值
+npx supabase db push               # 应用数据库迁移
+npm run import:ecdict              # 导入词典（需先下载 data/stardict.csv）
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 测试
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm test           # 单元测试（Vitest）
+npm run test:e2e   # 端到端测试（Playwright，需翻译后端可用，
+                   # 并在 .env.local 配置 E2E_EMAIL / E2E_PASSWORD）
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## 文档
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- 设计文档：`docs/superpowers/specs/`
+- 实施计划：`docs/superpowers/plans/`
+- 基础设施：`docs/infra/hardening.md`
