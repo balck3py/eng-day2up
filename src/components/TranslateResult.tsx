@@ -5,9 +5,10 @@ import { SelectionPopover } from './SelectionPopover'
 import type { HardWord } from '@/lib/hardwords/extract'
 import type { ProviderName } from '@/lib/translate/types'
 
-const PROVIDER_LABEL: Record<ProviderName, string> = {
-  ollama: '本地模型',
+const PROVIDER_LABEL: Record<ProviderName | 'local', string> = {
+  ollama: '本地 ollama',
   cloud: '云端模型',
+  local: '本地模型（自配）',
 }
 
 /**
@@ -25,7 +26,7 @@ export function TranslateResult({
 }: {
   source: string
   translation: string
-  provider: ProviderName | null
+  provider: ProviderName | 'local' | null
   hardWords: HardWord[]
   streaming: boolean
   error: string | null

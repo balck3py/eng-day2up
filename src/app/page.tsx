@@ -7,6 +7,7 @@ import { TranslateResult } from '@/components/TranslateResult'
 import type { WordDetail } from '@/lib/dict/types'
 import type { HardWord } from '@/lib/hardwords/extract'
 import type { Direction, ProviderName } from '@/lib/translate/types'
+import { getLocalModelConfig, streamLocalTranslate } from '@/lib/translate/localModel'
 
 const DIRECTIONS: { value: Direction; label: string }[] = [
   { value: 'en2zh', label: '英 → 中' },
@@ -19,7 +20,7 @@ export default function HomePage() {
   const [direction, setDirection] = useState<Direction>('en2zh')
   const [detail, setDetail] = useState<WordDetail | null>(null)
   const [translation, setTranslation] = useState('')
-  const [provider, setProvider] = useState<ProviderName | null>(null)
+  const [provider, setProvider] = useState<ProviderName | 'local' | null>(null)
   const [hardWords, setHardWords] = useState<HardWord[]>([])
   const [source, setSource] = useState('')
   const [streaming, setStreaming] = useState(false)
@@ -85,45 +86,59 @@ export default function HomePage() {
             .then((d: { words: HardWord[] }) => setHardWords(d.words))
             .catch(() => setHardWords([]))
 
-    try {
-      const res = await fetch('/api/translate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, direction }),
-      })
-      if (!res.ok || !res.body) {
-        const data = (await res.json().catch(() => ({}))) as { error?: string }
-        setError(data.error ?? '翻译失败，请重试。')
-        return
-      }
-      setProvider(res.headers.get('X-Provider') as ProviderName | null)
+    // 配置了本地模型就由浏览器直连它（覆盖服务端）；否则走默认后端。
+    const local = getLocalModelConfig()
 
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        let nl: number
-        while ((nl = buffer.indexOf('\n')) >= 0) {
-          const line = buffer.slice(0, nl).trim()
-          buffer = buffer.slice(nl + 1)
-          if (!line.startsWith('data:')) continue
-          try {
-            const evt = JSON.parse(line.slice(5).trim()) as {
-              type: string
-              value?: string
+    try {
+      if (local) {
+        setProvider('local')
+        for await (const delta of streamLocalTranslate(text, direction, local)) {
+          setTranslation((t) => t + delta)
+        }
+      } else {
+        const res = await fetch('/api/translate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, direction }),
+        })
+        if (!res.ok || !res.body) {
+          const data = (await res.json().catch(() => ({}))) as { error?: string }
+          setError(data.error ?? '翻译失败，请重试。')
+          return
+        }
+        setProvider(res.headers.get('X-Provider') as ProviderName | null)
+
+        const reader = res.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          let nl: number
+          while ((nl = buffer.indexOf('\n')) >= 0) {
+            const line = buffer.slice(0, nl).trim()
+            buffer = buffer.slice(nl + 1)
+            if (!line.startsWith('data:')) continue
+            try {
+              const evt = JSON.parse(line.slice(5).trim()) as {
+                type: string
+                value?: string
+              }
+              if (evt.type === 'delta') setTranslation((t) => t + (evt.value ?? ''))
+              else if (evt.type === 'error') setError(`响应中断：${evt.value}`)
+            } catch {
+              // 单帧解析失败不该毁掉整段译文，跳过继续读
             }
-            if (evt.type === 'delta') setTranslation((t) => t + (evt.value ?? ''))
-            else if (evt.type === 'error') setError(`响应中断：${evt.value}`)
-          } catch {
-            // 单帧解析失败不该毁掉整段译文，跳过继续读
           }
         }
       }
     } catch {
-      setError('网络错误，已保留收到的部分译文。')
+      setError(
+        local
+          ? '本地模型调用失败，请检查设置里的 Base URL、跨域与混合内容限制。'
+          : '网络错误，已保留收到的部分译文。',
+      )
     } finally {
       setStreaming(false)
       await hardWordsPromise
