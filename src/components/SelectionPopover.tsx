@@ -17,13 +17,20 @@ const MARGIN = 12
 export function SelectionPopover({ children }: { children: React.ReactNode }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const genRef = useRef(0)
+  // effect 只挂载一次，读不到 word 这个 state，用 ref 记当前展示的词
+  const wordRef = useRef('')
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
   const [word, setWord] = useState('')
   const [detail, setDetail] = useState<WordDetail | null>(null)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    function onSelect() {
+    function onSelect(e: Event) {
+      // 浮层内部的点击（发音按钮等）也会冒泡出 mouseup，而此时选区还在，
+      // 不排除的话每点一次浮层就重查一次词。
+      const origin = e.target as HTMLElement | null
+      if (origin?.closest('[data-selection-popover]')) return
+
       const sel = window.getSelection()
       const text = sel?.toString().trim() ?? ''
 
@@ -31,6 +38,8 @@ export function SelectionPopover({ children }: { children: React.ReactNode }) {
       if (!text || !isSingleWord(text) || !sel?.rangeCount) return
       const range = sel.getRangeAt(0)
       if (!hostRef.current?.contains(range.commonAncestorContainer)) return
+      // 选区没变就别重查（例如在已选中的词上再点一下）
+      if (text === wordRef.current) return
 
       const rect = range.getBoundingClientRect()
       // 贴住选中词的正下方，并夹在视口内 —— 页面不得因浮层而横向滚动
@@ -39,6 +48,7 @@ export function SelectionPopover({ children }: { children: React.ReactNode }) {
         Math.max(MARGIN, window.innerWidth - POPOVER_WIDTH - MARGIN),
       )
       setPos({ x, y: rect.bottom + 8 })
+      wordRef.current = text
       setWord(text)
       setDetail(null)
       setBusy(true)
@@ -55,13 +65,19 @@ export function SelectionPopover({ children }: { children: React.ReactNode }) {
         })
     }
 
+    function close() {
+      setPos(null)
+      // 允许再次选中同一个词重新查
+      wordRef.current = ''
+    }
+
     function onPointerDown(e: Event) {
       const target = e.target as HTMLElement | null
-      if (!target?.closest('[data-selection-popover]')) setPos(null)
+      if (!target?.closest('[data-selection-popover]')) close()
     }
 
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') setPos(null)
+      if (e.key === 'Escape') close()
     }
 
     document.addEventListener('mouseup', onSelect)
