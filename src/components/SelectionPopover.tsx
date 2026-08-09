@@ -14,7 +14,14 @@ const MARGIN = 12
  * 定位用 fixed + 视口坐标，而不是计划里写的「relative 容器 + absolute +
  * 页面坐标」—— 后者会把页面坐标当成容器坐标用，滚动过后必然偏。
  */
-export function SelectionPopover({ children }: { children: React.ReactNode }) {
+export function SelectionPopover({
+  children,
+  sourceContext = null,
+}: {
+  children: React.ReactNode
+  /** 浮层里收藏词时随词存下的原句 */
+  sourceContext?: string | null
+}) {
   const hostRef = useRef<HTMLDivElement>(null)
   const genRef = useRef(0)
   // effect 只挂载一次，读不到 word 这个 state，用 ref 记当前展示的词
@@ -119,7 +126,9 @@ export function SelectionPopover({ children }: { children: React.ReactNode }) {
           className="z-50 max-h-[60vh] overflow-y-auto rounded-[10px] border border-rule bg-card shadow-[0_4px_16px_rgba(20,33,61,0.12)]"
         >
           {busy && <p className="p-4 text-[0.9375rem] text-ink-3">查询中…</p>}
-          {!busy && detail && <WordCard detail={detail} variant="embedded" />}
+          {!busy && detail && (
+            <WordCard detail={detail} variant="embedded" sourceContext={sourceContext} />
+          )}
           {!busy && !detail && (
             <p className="p-4 text-[0.9375rem] text-ink-2">
               查询失败，请稍后重试。

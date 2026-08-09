@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { WordDetail } from '@/lib/dict/types'
 import { pronounce, type Accent } from '@/lib/audio/pronounce'
+import { FavoriteButton } from './FavoriteButton'
 
 const FAIL_MESSAGE_MS = 4000
 
@@ -86,10 +87,13 @@ function Pronunciation({
 export function WordCard({
   detail,
   variant = 'standalone',
+  sourceContext = null,
 }: {
   detail: WordDetail
   /** 'embedded' 供划词浮层使用：外层已有卡片外壳，这里不再叠一层边框，词头也收小 */
   variant?: 'standalone' | 'embedded'
+  /** 收藏时随词一起存下的原句（划词浮层会传入所在段落） */
+  sourceContext?: string | null
 }) {
   const isLemma =
     detail.matchedFrom === 'lemma' || detail.matchedFrom === 'suffix'
@@ -114,13 +118,19 @@ export function WordCard({
         </p>
       )}
 
-      <h2
-        className={`inline-block w-fit border-b border-rule pb-1 leading-tight font-semibold tracking-[-0.02em] text-ink ${
-          embedded ? 'text-[1.5rem]' : 'text-[2.25rem] sm:text-[3rem]'
-        }`}
-      >
-        {detail.word}
-      </h2>
+      <div className="flex items-start justify-between gap-3">
+        <h2
+          className={`inline-block w-fit border-b border-rule pb-1 leading-tight font-semibold tracking-[-0.02em] text-ink ${
+            embedded ? 'text-[1.5rem]' : 'text-[2.25rem] sm:text-[3rem]'
+          }`}
+        >
+          {detail.word}
+        </h2>
+        {/* 未收录的词收藏了也没释义可复习，只有词典命中才给收藏 */}
+        {detail.matchedFrom !== 'none' && (
+          <FavoriteButton word={detail.word} sourceContext={sourceContext} />
+        )}
+      </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1">
         <Pronunciation

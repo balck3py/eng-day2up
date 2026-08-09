@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import type { HardWord } from '@/lib/hardwords/extract'
+import { FavoriteButton } from './FavoriteButton'
 
 function Card({ hw, context }: { hw: HardWord; context: string }) {
   const [open, setOpen] = useState(false)
@@ -35,37 +36,43 @@ function Card({ hw, context }: { hw: HardWord; context: string }) {
 
   return (
     <li className="rounded-[10px] border border-rule bg-card">
-      <button
-        type="button"
-        onClick={() => void toggle()}
-        aria-expanded={open}
-        className="w-full rounded-[10px] p-3.5 text-left"
-      >
-        {inflected && (
-          <span className="block font-mono text-[0.8125rem] text-ink-3">
-            {hw.surface} →
-          </span>
-        )}
-        <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-          <span className="text-[1.125rem] font-semibold tracking-[-0.01em] text-ink">
-            {hw.word}
-          </span>
-          {hw.phonetic && (
-            <span className="font-mono text-[0.8125rem] text-ink-2">{hw.phonetic}</span>
+      {/* 收藏星标放在展开按钮外面，避免 <button> 嵌套 <button> */}
+      <div className="flex items-start">
+        <button
+          type="button"
+          onClick={() => void toggle()}
+          aria-expanded={open}
+          className="flex-1 rounded-l-[10px] py-3.5 pl-3.5 text-left"
+        >
+          {inflected && (
+            <span className="block font-mono text-[0.8125rem] text-ink-3">
+              {hw.surface} →
+            </span>
           )}
-        </span>
-
-        {hw.senses.length > 0 ? (
-          <span className="mt-1.5 block text-[0.9375rem] leading-[1.6] text-ink-2">
-            {hw.senses
-              .slice(0, 2)
-              .map((s) => (s.pos ? `${s.pos} ${s.meaning}` : s.meaning))
-              .join('；')}
+          <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="text-[1.125rem] font-semibold tracking-[-0.01em] text-ink">
+              {hw.word}
+            </span>
+            {hw.phonetic && (
+              <span className="font-mono text-[0.8125rem] text-ink-2">{hw.phonetic}</span>
+            )}
           </span>
-        ) : (
-          <span className="mt-1.5 block text-[0.9375rem] text-ink-3">词典未收录</span>
-        )}
-      </button>
+
+          {hw.senses.length > 0 ? (
+            <span className="mt-1.5 block text-[0.9375rem] leading-[1.6] text-ink-2">
+              {hw.senses
+                .slice(0, 2)
+                .map((s) => (s.pos ? `${s.pos} ${s.meaning}` : s.meaning))
+                .join('；')}
+            </span>
+          ) : (
+            <span className="mt-1.5 block text-[0.9375rem] text-ink-3">词典未收录</span>
+          )}
+        </button>
+        <div className="p-3.5 pl-2">
+          <FavoriteButton word={hw.word} sourceContext={context} />
+        </div>
+      </div>
 
       {open && (
         <div className="mx-3.5 mb-3.5 grid grid-cols-[2.75rem_1px_1fr] gap-x-3 border-t border-rule pt-2.5">

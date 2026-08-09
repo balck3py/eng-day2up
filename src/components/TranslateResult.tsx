@@ -31,7 +31,7 @@ export function TranslateResult({
   error: string | null
 }) {
   return (
-    <SelectionPopover>
+    <SelectionPopover sourceContext={source}>
       <div className="flex flex-col gap-6">
         <div className="grid gap-x-6 gap-y-5 md:grid-cols-[1fr_1px_1fr]">
           <section>
