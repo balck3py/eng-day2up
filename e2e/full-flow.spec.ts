@@ -1,0 +1,128 @@
+import { test, expect, type Page } from '@playwright/test'
+
+const EMAIL = process.env.E2E_EMAIL!
+const PASSWORD = process.env.E2E_PASSWORD!
+
+const PARAGRAPH =
+  'The committee deferred the decision pending further review of the ' +
+  'unprecedented anomalies discovered in the quarterly reconciliation.'
+
+/** 主页那个唯一的多行输入框（方向不同占位符也不同，用它统一定位） */
+function mainInput(page: Page) {
+  return page.getByPlaceholder(/输入/)
+}
+
+async function login(page: Page) {
+  await page.goto('/login')
+  await page.getByPlaceholder('邮箱').fill(EMAIL)
+  await page.getByPlaceholder('密码').fill(PASSWORD)
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  // 登录成功是整页跳转到 /，等主页输入框出现
+  await expect(mainInput(page)).toBeVisible()
+}
+
+/** 清空测试账号的单词本，保证用例之间互不干扰 */
+async function clearWordbook(page: Page) {
+  const res = await page.request.get('/api/wordbook')
+  const { entries } = (await res.json()) as { entries: { id: string }[] }
+  for (const e of entries) {
+    await page.request.delete(`/api/wordbook/${e.id}`)
+  }
+}
+
+test.beforeEach(async ({ page }) => {
+  await login(page)
+  await clearWordbook(page)
+})
+
+test('未登录访问被拦截到登录页', async ({ browser }) => {
+  const ctx = await browser.newContext()
+  const fresh = await ctx.newPage()
+  await fresh.goto('/wordbook')
+  await expect(fresh).toHaveURL(/\/login/)
+  await ctx.close()
+})
+
+test('单词查询显示词头与释义', async ({ page }) => {
+  await mainInput(page).fill('apple')
+  await page.getByRole('button', { name: '翻译' }).click()
+
+  await expect(page.getByRole('heading', { name: 'apple' })).toBeVisible()
+  await expect(page.getByText('苹果')).toBeVisible()
+})
+
+test('段落翻译产出译文与难词', async ({ page }) => {
+  await mainInput(page).fill(PARAGRAPH)
+  await page.getByRole('button', { name: '翻译' }).click()
+
+  // 难词卡片走数据库，通常先于译文出现
+  await expect(page.getByRole('heading', { name: '难词' })).toBeVisible()
+  await expect(page.getByText('unprecedented')).toBeVisible()
+
+  // 译文是流式的，等它攒出足够中文
+  const translation = page.locator('section', { hasText: '译文' })
+  await expect(translation).toContainText(/[一-龥]{8,}/, { timeout: 45_000 })
+})
+
+test('收藏后出现在单词本，可移除', async ({ page }) => {
+  await mainInput(page).fill('serendipity')
+  await page.getByRole('button', { name: '翻译' }).click()
+  await expect(page.getByRole('heading', { name: 'serendipity' })).toBeVisible()
+
+  await page.getByRole('button', { name: '收藏 serendipity' }).click()
+  await expect(
+    page.getByRole('button', { name: '从单词本移除 serendipity' }),
+  ).toBeVisible()
+
+  await page.getByRole('link', { name: '单词本' }).click()
+  await expect(page.getByText('serendipity')).toBeVisible()
+
+  await page.getByRole('button', { name: '移除 serendipity' }).click()
+  await expect(page.getByText('单词本还是空的')).toBeVisible()
+})
+
+test('复习流程走完一轮并更新熟练度', async ({ page }) => {
+  // 直接用接口铺数据，避免依赖 UI 收藏路径
+  for (const word of ['alpha', 'beta', 'gamma']) {
+    await page.request.post('/api/wordbook', {
+      data: { word, sourceContext: `A sentence with ${word}.` },
+    })
+  }
+
+  await page.goto('/review')
+  await expect(page.getByText('共 3 个单词')).toBeVisible()
+
+  await page.getByRole('radio', { name: '顺序' }).click()
+  await page.getByRole('button', { name: '开始' }).click()
+
+  for (let i = 1; i <= 3; i++) {
+    await expect(page.getByText(`${i} / 3`)).toBeVisible()
+    await page.getByText('点击或按空格翻面').click()
+    // 「认识」按钮排在「不认识」之后，last() 取到它
+    await page.getByRole('button', { name: /认识/ }).last().click()
+  }
+
+  await expect(page.getByText('本轮完成')).toBeVisible()
+  await expect(page.getByText(/认识 3/)).toBeVisible()
+
+  await page.getByRole('link', { name: '回单词本' }).click()
+  await expect(page.getByText(/熟练度 1\/5 · 复习 1 次/).first()).toBeVisible()
+})
+
+test('随机模式打乱顺序', async ({ page }) => {
+  for (const w of ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight']) {
+    await page.request.post('/api/wordbook', { data: { word: w } })
+  }
+
+  async function firstCardWord(): Promise<string> {
+    await page.goto('/review')
+    await page.getByRole('radio', { name: '随机' }).click()
+    await page.getByRole('button', { name: '开始' }).click()
+    return (await page.getByTestId('review-word').first().textContent()) ?? ''
+  }
+
+  // 8 张卡片，两轮首张相同的概率是 1/8 —— 试三轮，全相同才算失败
+  const seen = new Set<string>()
+  for (let i = 0; i < 3; i++) seen.add(await firstCardWord())
+  expect(seen.size).toBeGreaterThan(1)
+})

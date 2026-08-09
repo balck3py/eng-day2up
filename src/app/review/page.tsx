@@ -173,7 +173,10 @@ export default function ReviewPage() {
         onClick={() => setRevealed(!revealed)}
         className="min-h-56 rounded-[10px] border border-rule bg-card p-8 text-left shadow-[0_1px_2px_rgba(20,33,61,0.04)]"
       >
-        <p className="text-[2.25rem] font-semibold tracking-[-0.02em] text-ink">
+        <p
+          data-testid="review-word"
+          className="text-[2.25rem] font-semibold tracking-[-0.02em] text-ink"
+        >
           {card.word}
         </p>
         {revealed ? (
