@@ -34,8 +34,16 @@ export function SelectionPopover({ children }: { children: React.ReactNode }) {
       const sel = window.getSelection()
       const text = sel?.toString().trim() ?? ''
 
+      // 选区被收起（点击空白处）时清掉记忆，好让之后重新选中同一个词能再弹出。
+      // 这一步必须放在 wordRef 相等判断之前 —— close() 不再重置 wordRef，
+      // 靠这里在选区真正消失时才清，避免「点浮层外关闭」那次点击的 mouseup
+      // 在选区尚未清空时重新查词（mousedown 先 close、mouseup 再 onSelect 的竞态）。
+      if (!text) {
+        wordRef.current = ''
+        return
+      }
       // 只对「选区落在本组件内」且「是单个英文词」的情况响应
-      if (!text || !isSingleWord(text) || !sel?.rangeCount) return
+      if (!isSingleWord(text) || !sel?.rangeCount) return
       const range = sel.getRangeAt(0)
       if (!hostRef.current?.contains(range.commonAncestorContainer)) return
       // 选区没变就别重查（例如在已选中的词上再点一下）
@@ -66,9 +74,11 @@ export function SelectionPopover({ children }: { children: React.ReactNode }) {
     }
 
     function close() {
+      // 注意：这里不重置 wordRef。dismiss 是一次完整的点击，其 mousedown 走到这里
+      // 关闭浮层，但紧接着的 mouseup 会触发 onSelect；若此刻清空 wordRef，而浏览器
+      // 尚未清除旧选区，就会把这次 mouseup 当成新选择重新查词。改由 onSelect 在
+      // 选区真正收起时清空 wordRef。
       setPos(null)
-      // 允许再次选中同一个词重新查
-      wordRef.current = ''
     }
 
     function onPointerDown(e: Event) {
