@@ -83,7 +83,14 @@ function Pronunciation({
   )
 }
 
-export function WordCard({ detail }: { detail: WordDetail }) {
+export function WordCard({
+  detail,
+  variant = 'standalone',
+}: {
+  detail: WordDetail
+  /** 'embedded' 供划词浮层使用：外层已有卡片外壳，这里不再叠一层边框，词头也收小 */
+  variant?: 'standalone' | 'embedded'
+}) {
   const isLemma =
     detail.matchedFrom === 'lemma' || detail.matchedFrom === 'suffix'
   const hasBadges = detail.tags.length > 0 || detail.oxford || !!detail.collins
@@ -91,16 +98,27 @@ export function WordCard({ detail }: { detail: WordDetail }) {
   // 词本身。只要查到了词（detail.word 恒非空），就允许发音。
   const fallbackPhonetic =
     !detail.phoneticUs && !detail.phoneticUk ? detail.phonetic : null
+  const embedded = variant === 'embedded'
 
   return (
-    <article className="word-card-enter rounded-[10px] border border-rule bg-card p-5 shadow-[0_1px_2px_rgba(20,33,61,0.04)] sm:p-6">
+    <article
+      className={
+        embedded
+          ? 'p-4'
+          : 'word-card-enter rounded-[10px] border border-rule bg-card p-5 shadow-[0_1px_2px_rgba(20,33,61,0.04)] sm:p-6'
+      }
+    >
       {isLemma && (
         <p className="mb-1 font-mono text-[0.8125rem] text-ink-3">
           {detail.query.trim()} →
         </p>
       )}
 
-      <h2 className="inline-block w-fit border-b border-rule pb-1 text-[2.25rem] leading-tight font-semibold tracking-[-0.02em] text-ink sm:text-[3rem]">
+      <h2
+        className={`inline-block w-fit border-b border-rule pb-1 leading-tight font-semibold tracking-[-0.02em] text-ink ${
+          embedded ? 'text-[1.5rem]' : 'text-[2.25rem] sm:text-[3rem]'
+        }`}
+      >
         {detail.word}
       </h2>
 

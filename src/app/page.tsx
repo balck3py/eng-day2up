@@ -3,51 +3,167 @@
 import { useId, useState } from 'react'
 import { isSingleWord } from '@/lib/text/normalize'
 import { WordCard } from '@/components/WordCard'
+import { TranslateResult } from '@/components/TranslateResult'
 import type { WordDetail } from '@/lib/dict/types'
+import type { HardWord } from '@/lib/hardwords/extract'
+import type { Direction, ProviderName } from '@/lib/translate/types'
+
+const DIRECTIONS: { value: Direction; label: string }[] = [
+  { value: 'en2zh', label: '英 → 中' },
+  { value: 'zh2en', label: '中 → 英' },
+]
 
 export default function HomePage() {
   const inputId = useId()
   const [input, setInput] = useState('')
+  const [direction, setDirection] = useState<Direction>('en2zh')
   const [detail, setDetail] = useState<WordDetail | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
+  const [translation, setTranslation] = useState('')
+  const [provider, setProvider] = useState<ProviderName | null>(null)
+  const [hardWords, setHardWords] = useState<HardWord[]>([])
+  const [source, setSource] = useState('')
+  const [streaming, setStreaming] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  function reset() {
+    setDetail(null)
+    setTranslation('')
+    setProvider(null)
+    setHardWords([])
+    setSource('')
+    setError(null)
+  }
 
   async function submit() {
     const text = input.trim()
-    if (!text) return
-
-    setDetail(null)
-    setNotice(null)
-
-    if (!isSingleWord(text)) {
-      setNotice('段落翻译将在下一阶段提供，当前只支持查单个英文单词。')
-      return
-    }
-
+    if (!text || busy) return
+    reset()
     setBusy(true)
+    try {
+      // 单个英文词走词典，其余走 LLM。中译英不做单词分支——
+      // 输入中文词时用户要的是英文说法，那正是翻译。
+      if (isSingleWord(text) && direction === 'en2zh') {
+        await lookupSingleWord(text)
+      } else {
+        await translateText(text)
+      }
+    } finally {
+      setBusy(false)
+      setStreaming(false)
+    }
+  }
+
+  async function lookupSingleWord(text: string) {
     try {
       const res = await fetch(`/api/word/${encodeURIComponent(text)}`)
       if (!res.ok) {
-        setNotice(
-          res.status === 401 ? '登录已过期，请重新登录。' : '查询失败，请重试。',
-        )
+        setError(res.status === 401 ? '登录已过期，请重新登录。' : '查询失败，请重试。')
         return
       }
       setDetail((await res.json()) as WordDetail)
     } catch {
-      setNotice('网络错误，请重试。')
-    } finally {
-      setBusy(false)
+      setError('网络错误，请重试。')
     }
   }
 
+  async function translateText(text: string) {
+    setSource(text)
+    setStreaming(true)
+
+    // 难词拆解与译文并行发起 —— 前者走数据库，通常先到。
+    // 中译英不拆难词：难词拆解只对英文源文本有意义。
+    const hardWordsPromise =
+      direction === 'zh2en'
+        ? Promise.resolve()
+        : fetch('/api/hard-words', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text }),
+          })
+            .then((r) => (r.ok ? r.json() : { words: [] }))
+            .then((d: { words: HardWord[] }) => setHardWords(d.words))
+            .catch(() => setHardWords([]))
+
+    try {
+      const res = await fetch('/api/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, direction }),
+      })
+      if (!res.ok || !res.body) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string }
+        setError(data.error ?? '翻译失败，请重试。')
+        return
+      }
+      setProvider(res.headers.get('X-Provider') as ProviderName | null)
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        let nl: number
+        while ((nl = buffer.indexOf('\n')) >= 0) {
+          const line = buffer.slice(0, nl).trim()
+          buffer = buffer.slice(nl + 1)
+          if (!line.startsWith('data:')) continue
+          try {
+            const evt = JSON.parse(line.slice(5).trim()) as {
+              type: string
+              value?: string
+            }
+            if (evt.type === 'delta') setTranslation((t) => t + (evt.value ?? ''))
+            else if (evt.type === 'error') setError(`响应中断：${evt.value}`)
+          } catch {
+            // 单帧解析失败不该毁掉整段译文，跳过继续读
+          }
+        }
+      }
+    } catch {
+      setError('网络错误，已保留收到的部分译文。')
+    } finally {
+      setStreaming(false)
+      await hardWordsPromise
+    }
+  }
+
+  const showResult = source !== '' && (translation !== '' || hardWords.length > 0)
+
   return (
-    <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-5 py-10 sm:px-6">
-      <h1 className="text-xl font-semibold text-ink">翻译 · 单词本</h1>
+    <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-5 py-10 sm:px-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold text-ink">翻译 · 单词本</h1>
+
+        <div
+          role="radiogroup"
+          aria-label="翻译方向"
+          className="flex rounded-[10px] border border-rule bg-card p-0.5"
+        >
+          {DIRECTIONS.map((d) => (
+            <button
+              key={d.value}
+              type="button"
+              role="radio"
+              aria-checked={direction === d.value}
+              onClick={() => setDirection(d.value)}
+              className={`rounded-[8px] px-3 py-1 text-sm ${
+                direction === d.value
+                  ? 'bg-ink font-medium text-card'
+                  : 'text-ink-2 hover:text-ink'
+              }`}
+            >
+              {d.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="flex flex-col gap-3">
         <label htmlFor={inputId} className="sr-only">
-          英文单词
+          要翻译的单词或段落
         </label>
         <textarea
           id={inputId}
@@ -56,8 +172,10 @@ export default function HomePage() {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void submit()
           }}
-          rows={3}
-          placeholder="输入一个英文单词…"
+          rows={5}
+          placeholder={
+            direction === 'en2zh' ? '输入一个英文单词，或一整段英文…' : '输入一段中文…'
+          }
           className="w-full rounded-[10px] border border-rule bg-card p-3 text-ink placeholder:text-ink-3 focus:border-focus"
         />
 
@@ -69,13 +187,25 @@ export default function HomePage() {
             disabled={busy}
             className="rounded-[10px] bg-ink px-4 py-2 text-sm font-medium text-card disabled:opacity-50"
           >
-            {busy ? '查询中…' : '查询'}
+            {busy ? '处理中…' : '翻译'}
           </button>
         </div>
       </div>
 
-      {notice && <p className="text-sm text-ink-2">{notice}</p>}
+      {error && !translation && !detail && (
+        <p className="text-[0.9375rem] text-seal">{error}</p>
+      )}
       {detail && <WordCard detail={detail} />}
+      {showResult && (
+        <TranslateResult
+          source={source}
+          translation={translation}
+          provider={provider}
+          hardWords={hardWords}
+          streaming={streaming}
+          error={error}
+        />
+      )}
     </main>
   )
 }

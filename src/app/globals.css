@@ -72,8 +72,35 @@ body {
   animation: word-card-in 150ms ease-out;
 }
 
+/* 流式译文末尾的墨水光标：唯一诚实的「还在写」信号，比转圈更贴近这页的语汇 */
+@keyframes caret-blink {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  55%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.streaming-caret {
+  display: inline-block;
+  width: 0.45ch;
+  height: 1.05em;
+  margin-left: 0.1ch;
+  vertical-align: -0.15em;
+  background: var(--ink-2);
+  animation: caret-blink 1s steps(1) infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .word-card-enter {
     animation: none;
+  }
+
+  .streaming-caret {
+    animation: none;
+    opacity: 0.6;
   }
 }
