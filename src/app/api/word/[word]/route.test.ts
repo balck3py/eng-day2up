@@ -2,7 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // 三个依赖全部 mock：createServerSupabase / createAdminSupabase / lookupWord。
 // 不需要网络，也不依赖 dict_entries 是否已导入数据。
-const { getUserMock, createAdminMock, lookupWordMock, refreshPhoneticsMock, afterMock } = vi.hoisted(() => ({
+const {
+  getUserMock, createAdminMock, lookupWordMock, refreshPhoneticsMock, afterMock,
+  consumeQuotaMock, generateEntryMock, saveAiEntryMock, eligibleMock,
+} = vi.hoisted(() => ({
   getUserMock: vi.fn(),
   createAdminMock: vi.fn(() => ({ __fake: 'admin-db' })),
   lookupWordMock: vi.fn(async (_db: unknown, raw: string) => ({
@@ -18,6 +21,12 @@ const { getUserMock, createAdminMock, lookupWordMock, refreshPhoneticsMock, afte
   // 单测里直接调用 GET() 没有那层请求上下文，所以这里换成同步执行回调的桩，
   // 只验证「传给 after 的回调做了什么」，不验证 Next 的调度时机本身。
   afterMock: vi.fn((task: () => unknown) => task()),
+  // AI 兜底相关：默认闸门放行、配额通过、生成返回 null（→ 落回 none），
+  // 使不涉及 AI 的既有用例断言不变；需要测 AI 命中的用例单独覆盖 generateEntry。
+  consumeQuotaMock: vi.fn(async () => true),
+  generateEntryMock: vi.fn(async () => null as { pos: string; meaning: string }[] | null),
+  saveAiEntryMock: vi.fn(async () => {}),
+  eligibleMock: vi.fn(() => true),
 }))
 
 vi.mock('@/lib/supabase/server', () => ({
@@ -28,6 +37,12 @@ vi.mock('@/lib/supabase/admin', () => ({
 }))
 vi.mock('@/lib/dict/lookup', () => ({ lookupWord: lookupWordMock }))
 vi.mock('@/lib/dict/dictapi', () => ({ refreshPhonetics: refreshPhoneticsMock }))
+vi.mock('@/lib/quota', () => ({ consumeQuota: consumeQuotaMock }))
+vi.mock('@/lib/dict/ai-entry', () => ({
+  isAiFallbackEligible: eligibleMock,
+  generateEntry: generateEntryMock,
+  saveAiEntry: saveAiEntryMock,
+}))
 vi.mock('next/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('next/server')>()
   return { ...actual, after: afterMock }
@@ -48,6 +63,12 @@ beforeEach(() => {
   lookupWordMock.mockClear()
   refreshPhoneticsMock.mockClear()
   afterMock.mockClear()
+  consumeQuotaMock.mockClear()
+  generateEntryMock.mockClear()
+  generateEntryMock.mockResolvedValue(null)
+  saveAiEntryMock.mockClear()
+  eligibleMock.mockClear()
+  eligibleMock.mockReturnValue(true)
 })
 
 describe('GET /api/word/[word]', () => {
@@ -128,5 +149,49 @@ describe('GET /api/word/[word]', () => {
     expect(body.phoneticUs).toBeNull()
     expect(afterMock).toHaveBeenCalledTimes(1)
     expect(refreshPhoneticsMock).toHaveBeenCalledWith({ __fake: 'admin-db' }, 'newword')
+  })
+
+  it('第五级：未命中 + 闸门放行 + 配额通过 + AI 生成非空 → 返回 ai 释义并写回', async () => {
+    getUserMock.mockResolvedValueOnce(AUTHED)
+    generateEntryMock.mockResolvedValueOnce([{ pos: 'n.', meaning: '本体论' }])
+    const res = await GET(new Request('http://x/api/word/ontology'), ctx('ontology'))
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.matchedFrom).toBe('ai')
+    expect(body.senses).toEqual([{ pos: 'n.', meaning: '本体论' }])
+    expect(consumeQuotaMock).toHaveBeenCalledWith({ __fake: 'admin-db' }, 'u1')
+    // 写回走 after()（afterMock 同步执行回调）
+    expect(saveAiEntryMock).toHaveBeenCalledWith({ __fake: 'admin-db' }, 'ontology', [
+      { pos: 'n.', meaning: '本体论' },
+    ])
+  })
+
+  it('第五级：AI 返回空/null → 保持 none，不写回', async () => {
+    getUserMock.mockResolvedValueOnce(AUTHED)
+    generateEntryMock.mockResolvedValueOnce(null)
+    const res = await GET(new Request('http://x/api/word/zzzznotaword'), ctx('zzzznotaword'))
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.matchedFrom).toBe('none')
+    expect(saveAiEntryMock).not.toHaveBeenCalled()
+  })
+
+  it('第五级：闸门不放行时不消耗配额也不调 AI', async () => {
+    getUserMock.mockResolvedValueOnce(AUTHED)
+    eligibleMock.mockReturnValueOnce(false)
+    const res = await GET(new Request('http://x/api/word/xx'), ctx('12345'))
+    expect(res.status).toBe(200)
+    expect((await res.json()).matchedFrom).toBe('none')
+    expect(consumeQuotaMock).not.toHaveBeenCalled()
+    expect(generateEntryMock).not.toHaveBeenCalled()
+  })
+
+  it('第五级：配额超限 → 保持 none，不调 AI', async () => {
+    getUserMock.mockResolvedValueOnce(AUTHED)
+    consumeQuotaMock.mockResolvedValueOnce(false)
+    const res = await GET(new Request('http://x/api/word/ontology'), ctx('ontology'))
+    expect(res.status).toBe(200)
+    expect((await res.json()).matchedFrom).toBe('none')
+    expect(generateEntryMock).not.toHaveBeenCalled()
   })
 })

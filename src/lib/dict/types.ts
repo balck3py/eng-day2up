@@ -35,7 +35,7 @@ export interface PhoneticSet {
 }
 
 /** 词典查询的命中来源。 */
-export type MatchSource = 'exact' | 'lemma' | 'suffix' | 'none'
+export type MatchSource = 'exact' | 'lemma' | 'suffix' | 'ai' | 'none'
 
 /** 单词查询的完整结果。 */
 export interface WordDetail {

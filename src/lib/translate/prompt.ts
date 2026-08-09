@@ -19,6 +19,28 @@ export function buildTranslatePrompt(text: string, direction: Direction): ChatMe
 }
 
 /**
+ * 构建「为词库未收录的词生成释义」的 prompt（第五级 AI 兜底）。
+ * 硬性约束：绝不让 LLM 生成音标（IPA 幻觉率高，错音标背下来难纠正）。
+ * 输出严格 JSON，非有效英文词时返回空 senses，避免模型硬编。
+ */
+export function buildWordFallbackPrompt(word: string): ChatMessage[] {
+  return [
+    {
+      role: 'system',
+      content:
+        '你是一个英语词典助手。用户会给你一个英文单词，你为它生成简体中文释义。' +
+        '只输出 JSON，格式为 {"senses":[{"pos":"词性缩写","meaning":"中文释义"}]}。' +
+        'pos 用标准英文词性缩写（n. v. vt. vi. adj. adv. prep. conj. 等），' +
+        '无法判断时用空字符串。meaning 用简体中文。' +
+        '不要输出音标、例句、词源或任何解释性文字，不要用 markdown 代码块包裹。' +
+        '如果这个词不是一个有效的英文单词（拼写错误、乱码、生造词），' +
+        '必须返回 {"senses":[]}，不要硬编造释义。',
+    },
+    { role: 'user', content: word },
+  ]
+}
+
+/**
  * 构建「这个词在这句话里是什么意思」的 prompt。
  * 明确禁止输出音标 —— 音标只能来自词典层。
  */

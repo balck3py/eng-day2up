@@ -97,7 +97,9 @@ export function WordCard({
 }) {
   const isLemma =
     detail.matchedFrom === 'lemma' || detail.matchedFrom === 'suffix'
-  const hasBadges = detail.tags.length > 0 || detail.oxford || !!detail.collins
+  const isAi = detail.matchedFrom === 'ai'
+  const hasBadges =
+    isAi || detail.tags.length > 0 || detail.oxford || !!detail.collins
   // 发音按钮不依赖 dictionaryapi.dev 的音标/音频数据——有道和本地合成都只需要
   // 词本身。只要查到了词（detail.word 恒非空），就允许发音。
   const fallbackPhonetic =
@@ -155,6 +157,11 @@ export function WordCard({
 
       {hasBadges && (
         <div className="mt-3 flex flex-wrap gap-1.5">
+          {isAi && (
+            <span className="rounded-full border border-ink-3/30 bg-ink-3/10 px-2 py-0.5 text-[0.75rem] font-medium text-ink-3">
+              AI 释义
+            </span>
+          )}
           {detail.oxford && (
             <span className="rounded-full border border-jade/30 bg-jade/10 px-2 py-0.5 text-[0.75rem] font-medium text-jade">
               牛津核心
