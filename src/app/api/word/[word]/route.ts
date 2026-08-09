@@ -10,7 +10,7 @@ import { isAiFallbackEligible, generateEntry, saveAiEntry } from '@/lib/dict/ai-
 export const maxDuration = 60
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ word: string }> },
 ) {
   const auth = await createServerSupabase()
@@ -36,7 +36,10 @@ export async function GET(
 
   // 第五级：词库未命中 → 交给 LLM 生成释义并写回，让这个词从此进词库。
   // 音标不走 AI（继续走既有链路），闸门挡住乱码/超长，配额防刷。
-  if (detail.matchedFrom === 'none') {
+  // ?ai=skip：客户端配了本地模型时用它，服务端不再花云端 token 兜底，
+  // 改由浏览器直连本地模型生成、再经 /api/ai-entry 回写。
+  const skipAi = new URL(request.url).searchParams.get('ai') === 'skip'
+  if (detail.matchedFrom === 'none' && !skipAi) {
     const key = normalizeWord(decoded)
     if (isAiFallbackEligible(key) && (await consumeQuota(db, user.id))) {
       const senses = await generateEntry(key)

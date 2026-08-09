@@ -1,5 +1,7 @@
-import { buildTranslatePrompt } from './prompt'
-import type { Direction } from './types'
+import { buildTranslatePrompt, buildWordFallbackPrompt, buildExplainPrompt } from './prompt'
+import type { ChatMessage, Direction } from './types'
+import { parseAiSenses } from '@/lib/dict/ai-parse'
+import type { Sense } from '@/lib/dict/types'
 
 /**
  * 浏览器侧本地大模型配置。存 localStorage，只兼容 OpenAI 协议。
@@ -49,6 +51,61 @@ export function clearLocalModelConfig(): void {
 /** 拼出 /chat/completions 端点，容忍 base_url 末尾有无斜杠。 */
 function completionsUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, '') + '/chat/completions'
+}
+
+function authHeaders(config: LocalModelConfig): Record<string, string> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`
+  return headers
+}
+
+/**
+ * 非流式调用本地模型，返回完整文本。用于释义/兜底这类一句话结果 ——
+ * 边流边拼没有意义。失败抛异常，由调用方降级。
+ */
+async function chatComplete(
+  config: LocalModelConfig,
+  messages: ChatMessage[],
+): Promise<string> {
+  const res = await fetch(completionsUrl(config.baseUrl), {
+    method: 'POST',
+    headers: authHeaders(config),
+    body: JSON.stringify({ model: config.model, messages, stream: false }),
+  })
+  if (!res.ok) throw new Error(`本地模型返回 ${res.status}`)
+  const data = (await res.json()) as {
+    choices?: { message?: { content?: string } }[]
+  }
+  return data.choices?.[0]?.message?.content ?? ''
+}
+
+/**
+ * 用本地模型为词库未收录的词生成释义（复用服务端同一套 prompt 与防御性解析）。
+ * 失败或非有效英文词返回 null / 空数组，调用方据此降级为「未收录」。
+ */
+export async function generateLocalWordSenses(
+  word: string,
+  config: LocalModelConfig,
+): Promise<Sense[] | null> {
+  try {
+    return parseAiSenses(await chatComplete(config, buildWordFallbackPrompt(word)))
+  } catch {
+    return null
+  }
+}
+
+/** 用本地模型解释某个词在具体句子里的含义（难词卡展开）。失败返回 null。 */
+export async function explainLocal(
+  word: string,
+  context: string,
+  config: LocalModelConfig,
+): Promise<string | null> {
+  try {
+    const text = await chatComplete(config, buildExplainPrompt(word, context))
+    return text.trim() || null
+  } catch {
+    return null
+  }
 }
 
 /**

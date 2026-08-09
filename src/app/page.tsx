@@ -8,6 +8,7 @@ import type { WordDetail } from '@/lib/dict/types'
 import type { HardWord } from '@/lib/hardwords/extract'
 import type { Direction, ProviderName } from '@/lib/translate/types'
 import { getLocalModelConfig, streamLocalTranslate } from '@/lib/translate/localModel'
+import { lookupWordClient } from '@/lib/dict/clientLookup'
 
 const DIRECTIONS: { value: Direction; label: string }[] = [
   { value: 'en2zh', label: '英 → 中' },
@@ -56,16 +57,13 @@ export default function HomePage() {
   }
 
   async function lookupSingleWord(text: string) {
-    try {
-      const res = await fetch(`/api/word/${encodeURIComponent(text)}`)
-      if (!res.ok) {
-        setError(res.status === 401 ? '登录已过期，请重新登录。' : '查询失败，请重试。')
-        return
-      }
-      setDetail((await res.json()) as WordDetail)
-    } catch {
-      setError('网络错误，请重试。')
+    // lookupWordClient 内部会按本地模型配置决定是否走浏览器直连兜底
+    const result = await lookupWordClient(text)
+    if (!result) {
+      setError('查询失败，请重试。')
+      return
     }
+    setDetail(result)
   }
 
   async function translateText(text: string) {

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { isSingleWord } from '@/lib/text/normalize'
 import { WordCard } from './WordCard'
+import { lookupWordClient } from '@/lib/dict/clientLookup'
 import type { WordDetail } from '@/lib/dict/types'
 
 const POPOVER_WIDTH = 320
@@ -70,14 +71,11 @@ export function SelectionPopover({
 
       // 连续划词时旧请求可能后到，用世代号丢弃过期结果
       const gen = ++genRef.current
-      void fetch(`/api/word/${encodeURIComponent(text)}`)
-        .then((r) => (r.ok ? (r.json() as Promise<WordDetail>) : null))
-        .catch(() => null)
-        .then((d) => {
-          if (gen !== genRef.current) return
-          setDetail(d)
-          setBusy(false)
-        })
+      void lookupWordClient(text).then((d) => {
+        if (gen !== genRef.current) return
+        setDetail(d)
+        setBusy(false)
+      })
     }
 
     function close() {

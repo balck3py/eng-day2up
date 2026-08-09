@@ -143,11 +143,35 @@ export default function SettingsPage() {
         {saved && <span className="text-[0.875rem] text-jade">已保存</span>}
       </div>
 
-      <p className="text-[0.8125rem] leading-[1.6] text-ink-3">
-        提示：线上 HTTPS 页面直连 http://localhost 会被浏览器按「混合内容」拦截，
-        本地端点还需允许本站来源的跨域（如 ollama 设置 OLLAMA_ORIGINS）。
-        在本机 http 开发环境下不受此限。
-      </p>
+      <details className="rounded-[10px] border border-rule bg-card px-3 py-2 text-[0.8125rem] leading-[1.7] text-ink-2">
+        <summary className="cursor-pointer text-ink">
+          在线上（HTTPS）使用本地模型？点此看如何用隧道
+        </summary>
+        <div className="mt-2 flex flex-col gap-2 text-ink-3">
+          <p>
+            线上 <span className="font-mono text-ink-2">eng.eugen.uno</span> 是 HTTPS 页面，
+            浏览器会拦截它直连 <span className="font-mono">http://localhost</span>
+            （混合内容），且本地端点要允许本站跨域。两种解决办法：
+          </p>
+          <p>
+            1. 用隧道把本地模型暴露成一个 HTTPS 地址，把它填进上面的 Base URL：
+          </p>
+          <pre className="overflow-x-auto rounded-[8px] bg-paper px-3 py-2 font-mono text-[0.75rem] text-ink">
+{`# Cloudflare Tunnel（免费、自带 https 与 CORS 透传）
+cloudflared tunnel --url http://localhost:11434
+# 或 ngrok
+ngrok http 11434
+# 然后 Base URL 填隧道给出的 https 地址 + /v1`}
+          </pre>
+          <p>
+            2. 或让本地模型允许本站来源的跨域。以 ollama 为例：
+          </p>
+          <pre className="overflow-x-auto rounded-[8px] bg-paper px-3 py-2 font-mono text-[0.75rem] text-ink">
+{`OLLAMA_ORIGINS=https://eng.eugen.uno ollama serve`}
+          </pre>
+          <p>在本机 http 开发环境（localhost）下不受这些限制，直接填即可。</p>
+        </div>
+      </details>
     </main>
   )
 }

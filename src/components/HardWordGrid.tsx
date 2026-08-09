@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import type { HardWord } from '@/lib/hardwords/extract'
 import { FavoriteButton } from './FavoriteButton'
+import { getLocalModelConfig, explainLocal } from '@/lib/translate/localModel'
 
 function Card({ hw, context }: { hw: HardWord; context: string }) {
   const [open, setOpen] = useState(false)
@@ -20,13 +21,20 @@ function Card({ hw, context }: { hw: HardWord; context: string }) {
     if (!next || explanation !== null || busy) return
     setBusy(true)
     try {
-      const res = await fetch('/api/explain', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ word: hw.word, context }),
-      })
-      const data = (await res.json()) as { explanation?: string; error?: string }
-      setExplanation(res.ok ? (data.explanation ?? '') : `（${data.error}）`)
+      // 配了本地模型就由浏览器直连它解释，否则走服务端 /api/explain
+      const local = getLocalModelConfig()
+      if (local) {
+        const text = await explainLocal(hw.word, context, local)
+        setExplanation(text ?? '（本地模型释义失败，请检查设置）')
+      } else {
+        const res = await fetch('/api/explain', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ word: hw.word, context }),
+        })
+        const data = (await res.json()) as { explanation?: string; error?: string }
+        setExplanation(res.ok ? (data.explanation ?? '') : `（${data.error}）`)
+      }
     } catch {
       setExplanation('（释义获取失败，请重试）')
     } finally {
