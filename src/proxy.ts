@@ -83,5 +83,9 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|mp3)$).*)'],
+  // 13888386…txt 是第三方域名归属验证文件（public/ 下静态托管）。放进排除项，
+  // 让中间件对它不运行——否则未登录的验证方会被重定向到 /login，验证失败。
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|13888386ad23df3ab35134f00c18994d\\.txt|.*\\.(?:svg|png|jpg|mp3)$).*)',
+  ],
 }
