@@ -33,6 +33,7 @@ export async function* toLines(
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+  let drained = false
 
   try {
     for (;;) {
@@ -47,9 +48,19 @@ export async function* toLines(
         if (line) yield line
       }
     }
+    // 冲刷解码器：流在多字节字符中途断掉时，尾字节留在 TextDecoder 内部，
+    // 不 flush 就会被静默丢弃。
+    buffer += decoder.decode()
+    drained = true
     const tail = buffer.replace(/\r$/, '')
     if (tail) yield tail
   } finally {
-    reader.releaseLock()
+    if (drained) {
+      reader.releaseLock()
+    } else {
+      // 消费者提前 break / 迭代器被 return（调度器降级时就是如此）：
+      // 只 releaseLock 会让底层 HTTP 请求继续跑完，必须真的取消。
+      void reader.cancel().catch(() => {})
+    }
   }
 }
