@@ -66,3 +66,13 @@ dictionaryapi.dev 的数据源是 Wiktionary，质量参差 —— 并非每个�
 `hello`，dictionaryapi.dev 也**不能**提供完整的、双侧都带音频的美英对照 —— 这与上面
 109 词抽样得出的"英式音频明显稀缺"结论一致，进一步印证了"优雅降级而非编造"是必需的
 设计，而不是过度设计。
+
+---
+
+## 线上部署
+
+- 生产地址（自定义域名）：https://eng.eugen.uno
+- Vercel 项目：eng-day2up（team: dennisliu2015fgmailcoms-projects）
+- 部署方式：`vercel --prod --scope dennisliu2015fgmailcoms-projects`（CLI 上传本地代码，云端构建）
+- 最近一次 Plan 3 部署：2026-08-09，dpl_2n9xZ3bw4LyQDtXYKXheqkVTmrXm
+- Deployment Protection：已关闭（/login 公网 200，未登录 /wordbook、/review 均 307 跳登录）
