@@ -134,9 +134,7 @@ export default function HomePage() {
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-5 py-10 sm:px-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold text-ink">翻译 · 单词本</h1>
-
+      <div className="flex flex-wrap items-center justify-end gap-3">
         <div
           role="radiogroup"
           aria-label="翻译方向"
