@@ -181,7 +181,11 @@ export default function HomePage() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void submit()
+            // 回车翻译，Shift+回车换行（输入法组合中的回车不触发）
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault()
+              void submit()
+            }
           }}
           rows={5}
           placeholder={
@@ -191,7 +195,7 @@ export default function HomePage() {
         />
 
         <div className="flex items-center justify-between gap-3">
-          <p className="font-mono text-[0.8125rem] text-ink-3">⌘Enter 提交</p>
+          <p className="font-mono text-[0.8125rem] text-ink-3">回车翻译 · Shift+回车换行</p>
           <button
             type="button"
             onClick={() => void submit()}

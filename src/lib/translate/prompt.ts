@@ -19,22 +19,26 @@ export function buildTranslatePrompt(text: string, direction: Direction): ChatMe
 }
 
 /**
- * 构建「为词库未收录的词生成释义」的 prompt（第五级 AI 兜底）。
- * 硬性约束：绝不让 LLM 生成音标（IPA 幻觉率高，错音标背下来难纠正）。
- * 输出严格 JSON，非有效英文词时返回空 senses，避免模型硬编。
+ * 构建「为词库未收录的词生成词条」的 prompt（第五级 AI 兜底）。
+ * 要求模型同时：纠正明显拼写错误、给出美式音标、生成分词性中文释义。
+ * 覆盖组合词（work-flow）、专有名词、词库漏收的正常词。
+ * 只有在完全无法判断/纠正（乱码、随机字母）时才返回空 senses。
  */
 export function buildWordFallbackPrompt(word: string): ChatMessage[] {
   return [
     {
       role: 'system',
       content:
-        '你是一个英语词典助手。用户会给你一个英文单词，你为它生成简体中文释义。' +
-        '只输出 JSON，格式为 {"senses":[{"pos":"词性缩写","meaning":"中文释义"}]}。' +
-        'pos 用标准英文词性缩写（n. v. vt. vi. adj. adv. prep. conj. 等），' +
-        '无法判断时用空字符串。meaning 用简体中文。' +
-        '不要输出音标、例句、词源或任何解释性文字，不要用 markdown 代码块包裹。' +
-        '如果这个词不是一个有效的英文单词（拼写错误、乱码、生造词），' +
-        '必须返回 {"senses":[]}，不要硬编造释义。',
+        '你是一个英语词典助手。用户给你一个英文单词（可能拼写有误、是组合词或专有名词）。' +
+        '只输出 JSON，格式：' +
+        '{"word":"规范/纠正后的英文词","phonetic":"美式音标","senses":[{"pos":"词性缩写","meaning":"中文释义"}]}。' +
+        '规则：' +
+        '1) 若输入有明显拼写错误（如 immunotherpy、recieve），把 word 设为纠正后的正确拼写并给它的释义；否则 word 原样返回。' +
+        '2) phonetic 为该词的美式音标，用国际音标并带斜杠，如 "/ˌɪmjənoʊˈθerəpi/"；实在给不出就用空字符串。' +
+        '3) pos 用标准英文词性缩写（n. v. vt. vi. adj. adv. prep. conj. 等），判断不了用空字符串；meaning 用简体中文。' +
+        '4) 组合词（如 work-flow）、专有名词也要给出释义。' +
+        '5) 仅当输入是无意义乱码、随机字母、无法纠正也无法解释时，才返回 {"word":"","phonetic":"","senses":[]}。' +
+        '不要输出例句、词源或任何解释性文字，不要用 markdown 代码块包裹。',
     },
     { role: 'user', content: word },
   ]

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import type { LookupResult } from '@/lib/dict/lookup'
 
 // 三个依赖全部 mock：createServerSupabase / createAdminSupabase / lookupWord。
 // 不需要网络，也不依赖 dict_entries 是否已导入数据。
@@ -8,14 +9,16 @@ const {
 } = vi.hoisted(() => ({
   getUserMock: vi.fn(),
   createAdminMock: vi.fn(() => ({ __fake: 'admin-db' })),
-  lookupWordMock: vi.fn(async (_db: unknown, raw: string) => ({
-    detail: {
-      query: raw, word: raw.toLowerCase(), matchedFrom: 'none' as const,
-      phonetic: null, phoneticUs: null, phoneticUk: null, audioUs: null, audioUk: null,
-      senses: [], tags: [], collins: null, oxford: false,
-    },
-    refreshPhoneticsKey: null as string | null,
-  })),
+  lookupWordMock: vi.fn(
+    async (_db: unknown, raw: string): Promise<LookupResult> => ({
+      detail: {
+        query: raw, word: raw.toLowerCase(), correctedFrom: null, matchedFrom: 'none',
+        phonetic: null, phoneticUs: null, phoneticUk: null, audioUs: null, audioUk: null,
+        senses: [], tags: [], collins: null, oxford: false,
+      },
+      refreshPhoneticsKey: null,
+    }),
+  ),
   refreshPhoneticsMock: vi.fn(async () => {}),
   // 真实 after() 在请求作用域之外调用会抛错（见 next/dist/server/after/after.js），
   // 单测里直接调用 GET() 没有那层请求上下文，所以这里换成同步执行回调的桩，
@@ -24,7 +27,10 @@ const {
   // AI 兜底相关：默认闸门放行、配额通过、生成返回 null（→ 落回 none），
   // 使不涉及 AI 的既有用例断言不变；需要测 AI 命中的用例单独覆盖 generateEntry。
   consumeQuotaMock: vi.fn(async () => true),
-  generateEntryMock: vi.fn(async () => null as { pos: string; meaning: string }[] | null),
+  generateEntryMock: vi.fn(
+    async () =>
+      null as { word: string; phonetic: string | null; senses: { pos: string; meaning: string }[] } | null,
+  ),
   saveAiEntryMock: vi.fn(async () => {}),
   eligibleMock: vi.fn(() => true),
 }))
@@ -136,7 +142,7 @@ describe('GET /api/word/[word]', () => {
     getUserMock.mockResolvedValueOnce(AUTHED)
     lookupWordMock.mockResolvedValueOnce({
       detail: {
-        query: 'newword', word: 'newword', matchedFrom: 'none' as const,
+        query: 'newword', word: 'newword', correctedFrom: null, matchedFrom: 'none',
         phonetic: null, phoneticUs: null, phoneticUk: null, audioUs: null, audioUk: null,
         senses: [], tags: [], collins: null, oxford: false,
       },
@@ -151,19 +157,66 @@ describe('GET /api/word/[word]', () => {
     expect(refreshPhoneticsMock).toHaveBeenCalledWith({ __fake: 'admin-db' }, 'newword')
   })
 
-  it('第五级：未命中 + 闸门放行 + 配额通过 + AI 生成非空 → 返回 ai 释义并写回', async () => {
+  it('第五级：未命中 + 闸门放行 + 配额通过 + AI 生成非空 → 返回 ai 释义、音标并写回', async () => {
     getUserMock.mockResolvedValueOnce(AUTHED)
-    generateEntryMock.mockResolvedValueOnce([{ pos: 'n.', meaning: '本体论' }])
+    generateEntryMock.mockResolvedValueOnce({
+      word: 'ontology',
+      phonetic: '/ɒnˈtɒlədʒi/',
+      senses: [{ pos: 'n.', meaning: '本体论' }],
+    })
     const res = await GET(new Request('http://x/api/word/ontology'), ctx('ontology'))
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.matchedFrom).toBe('ai')
+    expect(body.word).toBe('ontology')
+    expect(body.phonetic).toBe('/ɒnˈtɒlədʒi/')
+    expect(body.correctedFrom).toBeNull()
     expect(body.senses).toEqual([{ pos: 'n.', meaning: '本体论' }])
     expect(consumeQuotaMock).toHaveBeenCalledWith({ __fake: 'admin-db' }, 'u1')
-    // 写回走 after()（afterMock 同步执行回调）
-    expect(saveAiEntryMock).toHaveBeenCalledWith({ __fake: 'admin-db' }, 'ontology', [
-      { pos: 'n.', meaning: '本体论' },
-    ])
+    // 写回走 after()（afterMock 同步执行回调），带上 AI 音标
+    expect(saveAiEntryMock).toHaveBeenCalledWith(
+      { __fake: 'admin-db' },
+      'ontology',
+      [{ pos: 'n.', meaning: '本体论' }],
+      '/ɒnˈtɒlədʒi/',
+    )
+  })
+
+  it('第五级：拼写纠正后回查词典命中 → 用真实词条并标记 correctedFrom，不写回 AI', async () => {
+    getUserMock.mockResolvedValueOnce(AUTHED)
+    // AI 把 recieve 纠正为 receive
+    generateEntryMock.mockResolvedValueOnce({
+      word: 'receive',
+      phonetic: '/rɪˈsiːv/',
+      senses: [{ pos: 'vt.', meaning: '（AI 版）收到' }],
+    })
+    // 第一次 lookup(recieve) → none；第二次 lookup(receive) → 命中词典
+    lookupWordMock
+      .mockResolvedValueOnce({
+        detail: {
+          query: 'recieve', word: 'recieve', correctedFrom: null, matchedFrom: 'none' as const,
+          phonetic: null, phoneticUs: null, phoneticUk: null, audioUs: null, audioUk: null,
+          senses: [], tags: [], collins: null, oxford: false,
+        },
+        refreshPhoneticsKey: null,
+      })
+      .mockResolvedValueOnce({
+        detail: {
+          query: 'receive', word: 'receive', correctedFrom: null, matchedFrom: 'exact' as const,
+          phonetic: null, phoneticUs: '/rɪˈsiːv/', phoneticUk: null, audioUs: null, audioUk: null,
+          senses: [{ pos: 'vt.', meaning: '收到' }], tags: [], collins: 4, oxford: true,
+        },
+        refreshPhoneticsKey: null,
+      })
+    const res = await GET(new Request('http://x/api/word/recieve'), ctx('recieve'))
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.matchedFrom).toBe('exact')
+    expect(body.word).toBe('receive')
+    expect(body.correctedFrom).toBe('recieve')
+    expect(body.senses).toEqual([{ pos: 'vt.', meaning: '收到' }])
+    // 命中词典就不写回 AI 释义
+    expect(saveAiEntryMock).not.toHaveBeenCalled()
   })
 
   it('第五级：AI 返回空/null → 保持 none，不写回', async () => {

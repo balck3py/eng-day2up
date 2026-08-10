@@ -114,10 +114,17 @@ export function WordCard({
           : 'word-card-enter rounded-[10px] border border-rule bg-card p-5 shadow-[0_1px_2px_rgba(20,33,61,0.04)] sm:p-6'
       }
     >
-      {isLemma && (
-        <p className="mb-1 font-mono text-[0.8125rem] text-ink-3">
-          {detail.query.trim()} →
+      {detail.correctedFrom ? (
+        <p className="mb-1 text-[0.8125rem] text-seal">
+          拼写更正：<span className="font-mono line-through">{detail.correctedFrom.trim()}</span> →{' '}
+          <span className="font-mono">{detail.word}</span>
         </p>
+      ) : (
+        isLemma && (
+          <p className="mb-1 font-mono text-[0.8125rem] text-ink-3">
+            {detail.query.trim()} →
+          </p>
+        )
       )}
 
       <div className="flex items-start justify-between gap-3">

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { orderCards, type ReviewMode } from '@/lib/review/order'
 import type { WordbookEntry } from '@/lib/wordbook/types'
+import { AudioButton } from '@/components/AudioButton'
 
 type Phase = 'setup' | 'reviewing' | 'done'
 
@@ -168,10 +169,16 @@ export default function ReviewPage() {
         {cursor + 1} / {queue.length}
       </p>
 
-      <button
-        type="button"
+      {/* 用 div 而非 button 作卡片外壳：翻面后卡内有发音按钮，button 嵌 button 是非法
+          HTML。空格翻面由全局 keydown 处理，这里再补 Enter，role/tabIndex 保证可聚焦。 */}
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => setRevealed(!revealed)}
-        className="min-h-56 rounded-[10px] border border-rule bg-card p-8 text-left shadow-[0_1px_2px_rgba(20,33,61,0.04)]"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') setRevealed((r) => !r)
+        }}
+        className="min-h-56 cursor-pointer rounded-[10px] border border-rule bg-card p-8 text-left shadow-[0_1px_2px_rgba(20,33,61,0.04)] focus:border-focus focus:outline-none"
       >
         <p
           data-testid="review-word"
@@ -181,12 +188,32 @@ export default function ReviewPage() {
         </p>
         {revealed ? (
           <div className="mt-5 border-t border-rule pt-4">
-            {card.sourceContext ? (
-              <p className="text-[0.9375rem] leading-[1.7] text-ink-2">
-                {card.sourceContext}
-              </p>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              {card.phonetic && (
+                <span className="font-mono text-[0.9rem] text-ink-2">{card.phonetic}</span>
+              )}
+              <AudioButton word={card.word} />
+            </div>
+            {card.senses.length > 0 ? (
+              <ul className="mt-3 flex flex-col gap-1">
+                {card.senses.map((s, i) => (
+                  <li key={i} className="text-[1rem] leading-[1.7] text-ink">
+                    {s.pos && (
+                      <span className="mr-1.5 font-mono text-[0.8125rem] text-ink-2">
+                        {s.pos}
+                      </span>
+                    )}
+                    {s.meaning}
+                  </li>
+                ))}
+              </ul>
             ) : (
-              <p className="text-[0.9375rem] text-ink-3">（收藏时没有记录原句）</p>
+              <p className="mt-3 text-[0.9375rem] text-ink-3">词库暂无中文释义</p>
+            )}
+            {card.sourceContext && (
+              <p className="mt-3 text-[0.875rem] leading-[1.7] text-ink-3">
+                “{card.sourceContext}”
+              </p>
             )}
             <p className="mt-3 font-mono text-[0.75rem] text-ink-3">
               熟练度 {card.familiarity}/5 · 已复习 {card.reviewCount} 次
@@ -195,7 +222,7 @@ export default function ReviewPage() {
         ) : (
           <p className="mt-5 text-[0.9375rem] text-ink-3">点击或按空格翻面</p>
         )}
-      </button>
+      </div>
 
       {revealed && (
         <div className="flex gap-3">

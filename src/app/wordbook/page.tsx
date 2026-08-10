@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useId, useState } from 'react'
 import Link from 'next/link'
 import type { WordbookEntry } from '@/lib/wordbook/types'
+import { AudioButton } from '@/components/AudioButton'
 
 export default function WordbookPage() {
   const searchId = useId()
@@ -74,15 +75,35 @@ export default function WordbookPage() {
           {entries.map((e) => (
             <li key={e.id} className="flex items-start gap-4 px-4 py-3.5">
               <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
                   <span className="text-[1.0625rem] font-medium text-ink">{e.word}</span>
+                  {e.phonetic && (
+                    <span className="font-mono text-[0.8125rem] text-ink-2">{e.phonetic}</span>
+                  )}
+                  <AudioButton word={e.word} />
                   <span className="font-mono text-[0.75rem] text-ink-3">
                     熟练度 {e.familiarity}/5 · 复习 {e.reviewCount} 次
                   </span>
                 </div>
+                {e.senses.length > 0 ? (
+                  <ul className="mt-1.5 flex flex-col gap-0.5">
+                    {e.senses.slice(0, 4).map((s, i) => (
+                      <li key={i} className="text-[0.9375rem] leading-[1.6] text-ink">
+                        {s.pos && (
+                          <span className="mr-1.5 font-mono text-[0.8125rem] text-ink-2">
+                            {s.pos}
+                          </span>
+                        )}
+                        {s.meaning}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-1 text-[0.8125rem] text-ink-3">词库暂无中文释义</p>
+                )}
                 {e.sourceContext && (
-                  <p className="mt-1 line-clamp-2 text-[0.9375rem] leading-[1.6] text-ink-2">
-                    {e.sourceContext}
+                  <p className="mt-1.5 line-clamp-2 text-[0.875rem] leading-[1.6] text-ink-3">
+                    “{e.sourceContext}”
                   </p>
                 )}
               </div>

@@ -1,7 +1,7 @@
 import { buildTranslatePrompt, buildWordFallbackPrompt, buildExplainPrompt } from './prompt'
 import type { ChatMessage, Direction } from './types'
-import { parseAiSenses } from '@/lib/dict/ai-parse'
-import type { Sense } from '@/lib/dict/types'
+import { parseAiEntry } from '@/lib/dict/ai-parse'
+import type { AiEntry } from '@/lib/dict/types'
 
 /**
  * 浏览器侧本地大模型配置。存 localStorage，只兼容 OpenAI 协议。
@@ -80,15 +80,18 @@ async function chatComplete(
 }
 
 /**
- * 用本地模型为词库未收录的词生成释义（复用服务端同一套 prompt 与防御性解析）。
- * 失败或非有效英文词返回 null / 空数组，调用方据此降级为「未收录」。
+ * 用本地模型为词库未收录的词生成词条（含拼写纠正、音标、释义）。
+ * 复用服务端同一套 prompt 与防御性解析。失败或判定乱码返回 null，
+ * 调用方据此降级为「未收录」。
  */
-export async function generateLocalWordSenses(
+export async function generateLocalWordEntry(
   word: string,
   config: LocalModelConfig,
-): Promise<Sense[] | null> {
+): Promise<AiEntry | null> {
   try {
-    return parseAiSenses(await chatComplete(config, buildWordFallbackPrompt(word)))
+    const entry = parseAiEntry(await chatComplete(config, buildWordFallbackPrompt(word)), word)
+    if (!entry || entry.senses.length === 0) return null
+    return entry
   } catch {
     return null
   }

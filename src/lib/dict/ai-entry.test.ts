@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseAiSenses, isAiFallbackEligible } from './ai-entry'
+import { parseAiSenses, isAiFallbackEligible, parseAiEntry } from './ai-entry'
 
 describe('parseAiSenses', () => {
   it('解析正常 JSON', () => {
@@ -52,6 +52,46 @@ describe('parseAiSenses', () => {
 
   it('空字符串返回 null', () => {
     expect(parseAiSenses('')).toBeNull()
+  })
+})
+
+describe('parseAiEntry', () => {
+  it('提取 word / phonetic / senses', () => {
+    const raw =
+      '{"word":"immunotherapy","phonetic":"/ˌɪmjənoʊˈθerəpi/","senses":[{"pos":"n.","meaning":"免疫疗法"}]}'
+    expect(parseAiEntry(raw, 'immunotherpy')).toEqual({
+      word: 'immunotherapy',
+      phonetic: '/ˌɪmjənoʊˈθerəpi/',
+      senses: [{ pos: 'n.', meaning: '免疫疗法' }],
+    })
+  })
+
+  it('word 缺失/不合法时回落到 fallbackKey', () => {
+    const raw = '{"senses":[{"pos":"n.","meaning":"工作流"}]}'
+    expect(parseAiEntry(raw, 'work-flow')).toEqual({
+      word: 'work-flow',
+      phonetic: null,
+      senses: [{ pos: 'n.', meaning: '工作流' }],
+    })
+  })
+
+  it('phonetic 为空串时归一为 null', () => {
+    const raw = '{"word":"workflow","phonetic":"","senses":[{"pos":"n.","meaning":"工作流"}]}'
+    expect(parseAiEntry(raw, 'workflow')?.phonetic).toBeNull()
+  })
+
+  it('对 word 做 normalize（去首尾非字母 + 小写）', () => {
+    const raw = '{"word":"Receive.","phonetic":"/rɪˈsiːv/","senses":[{"pos":"vt.","meaning":"收到"}]}'
+    expect(parseAiEntry(raw, 'recieve')?.word).toBe('receive')
+  })
+
+  it('乱码：空 senses 时返回 word=fallback、senses=[]（由调用方据长度降级）', () => {
+    const raw = '{"word":"","phonetic":"","senses":[]}'
+    expect(parseAiEntry(raw, 'zzzz')).toEqual({ word: 'zzzz', phonetic: null, senses: [] })
+  })
+
+  it('非法 JSON 返回 null', () => {
+    expect(parseAiEntry('not json at all', 'x')).toBeNull()
   })
 })
 

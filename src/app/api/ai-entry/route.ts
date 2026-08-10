@@ -23,6 +23,7 @@ export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as {
     word?: unknown
     senses?: unknown
+    phonetic?: unknown
   } | null
 
   const key = normalizeWord(typeof body?.word === 'string' ? body.word : '')
@@ -49,12 +50,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: '释义为空' }, { status: 400 })
   }
 
+  const phonetic =
+    typeof body?.phonetic === 'string' && body.phonetic.trim()
+      ? body.phonetic.trim().slice(0, 64)
+      : null
+
   const db = createAdminSupabase()
   // 已存在就不重复写（客户端是在服务端返回 none 后才来写，正常不会撞）
   const { data: existing } = await db
     .from('dict_entries').select('id').eq('word_key', key).maybeSingle()
   if (existing) return NextResponse.json({ ok: true, already: true })
 
-  await saveAiEntry(db, key, senses)
+  await saveAiEntry(db, key, senses, phonetic)
   return NextResponse.json({ ok: true })
 }

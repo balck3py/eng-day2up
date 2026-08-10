@@ -69,6 +69,7 @@ function build(
   return {
     query,
     word: entry?.word ?? key,
+    correctedFrom: null,
     matchedFrom,
     phonetic: entry?.phonetic ?? null,
     phoneticUs: phonetics.phoneticUs,

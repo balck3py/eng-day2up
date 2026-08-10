@@ -1,4 +1,5 @@
-import type { Sense } from './types'
+import type { AiEntry, Sense } from './types'
+import { normalizeWord } from '@/lib/text/normalize'
 
 // 闸门：只有像样的英文单词才值得花模型的钱去兜底。
 const MAX_WORD_LENGTH = 32
@@ -55,4 +56,43 @@ export function parseAiSenses(raw: string): Sense[] | null {
     out.push({ pos: typeof pos === 'string' ? pos.trim() : '', meaning: trimmed })
   }
   return out
+}
+
+/**
+ * 解析升级版兜底 JSON：{word, phonetic, senses}。在 parseAiSenses 之上再提取
+ * 纠正后的词形与音标。解析失败或结构不符返回 null（降级为「未收录」）。
+ *
+ * - word：模型给的纠正/规范词形，经 normalize + 闸门校验；不合法时回落到 fallbackKey。
+ * - phonetic：非空字符串才保留，否则 null。
+ * - senses：复用 parseAiSenses 的防御性解析；为空表示模型判定无法给出释义。
+ */
+export function parseAiEntry(raw: string, fallbackKey: string): AiEntry | null {
+  const senses = parseAiSenses(raw)
+  if (senses === null) return null
+
+  // 取出 word / phonetic 字段（parseAiSenses 已验证过是可解析对象，这里再解一次
+  // 拿完整对象；解析失败不致命，退回只用 senses）
+  let obj: Record<string, unknown> = {}
+  try {
+    let text = raw.trim()
+    const fence = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text)
+    if (fence) text = fence[1].trim()
+    const start = text.indexOf('{')
+    const end = text.lastIndexOf('}')
+    if (start !== -1 && end > start) {
+      const parsed = JSON.parse(text.slice(start, end + 1))
+      if (parsed && typeof parsed === 'object') obj = parsed as Record<string, unknown>
+    }
+  } catch {
+    // 忽略：word/phonetic 缺失时用回落值
+  }
+
+  const rawWord = typeof obj.word === 'string' ? obj.word : ''
+  const normalized = normalizeWord(rawWord)
+  const word = isAiFallbackEligible(normalized) ? normalized : fallbackKey
+
+  const rawPhon = typeof obj.phonetic === 'string' ? obj.phonetic.trim() : ''
+  const phonetic = rawPhon || null
+
+  return { word, phonetic, senses }
 }

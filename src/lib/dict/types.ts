@@ -37,12 +37,23 @@ export interface PhoneticSet {
 /** 词典查询的命中来源。 */
 export type MatchSource = 'exact' | 'lemma' | 'suffix' | 'ai' | 'none'
 
+/** AI 兜底生成的一条词条：纠正后的词形 + 音标 + 释义。 */
+export interface AiEntry {
+  /** 纠正/规范化后的词（已 normalize、通过闸门校验）；无需纠正时即为输入词 */
+  word: string
+  /** 美式音标（IPA，带斜杠），模型给不出时为 null */
+  phonetic: string | null
+  senses: Sense[]
+}
+
 /** 单词查询的完整结果。 */
 export interface WordDetail {
   /** 用户原始输入 */
   query: string
   /** 实际命中的词（可能是原型） */
   word: string
+  /** 若发生了拼写纠正，这里是用户原始拼写；否则 null */
+  correctedFrom: string | null
   matchedFrom: MatchSource
   /** ECDICT 单一音标，作为美/英音标缺失时的保底显示 */
   phonetic: string | null
