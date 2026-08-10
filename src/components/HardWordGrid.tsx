@@ -1,14 +1,44 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { HardWord } from '@/lib/hardwords/extract'
+import type { Sense } from '@/lib/dict/types'
 import { FavoriteButton } from './FavoriteButton'
 import { getLocalModelConfig, explainLocal } from '@/lib/translate/localModel'
+import { lookupWordClient } from '@/lib/dict/clientLookup'
 
 function Card({ hw, context }: { hw: HardWord; context: string }) {
   const [open, setOpen] = useState(false)
   const [explanation, setExplanation] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  // 难词拆解为了控制延迟不调 LLM，词库（含词形还原/后缀）没命中的词此刻 senses 为空。
+  // 这类词不能直接判「未收录」——必须走完整查词（含 AI 兜底、会回写词库）再定论，
+  // 只有 AI 也给不出释义时才显示未收录。这些补充状态覆盖初始的 hw 值。
+  const [senses, setSenses] = useState<Sense[]>(hw.senses)
+  const [phonetic, setPhonetic] = useState<string | null>(hw.phonetic)
+  const [resolving, setResolving] = useState(hw.senses.length === 0)
+
+  useEffect(() => {
+    if (hw.senses.length > 0) return
+    let alive = true
+    void lookupWordClient(hw.word)
+      .then((d) => {
+        if (!alive) return
+        if (d && d.senses.length > 0) {
+          setSenses(d.senses)
+          setPhonetic(d.phonetic ?? d.phoneticUs ?? d.phoneticUk ?? null)
+        }
+        setResolving(false)
+      })
+      .catch(() => {
+        if (alive) setResolving(false)
+      })
+    return () => {
+      alive = false
+    }
+    // hw.word 唯一标识这张卡；senses 只在初始为空时兜底一次
+  }, [hw.word, hw.senses.length])
 
   // 原文里的形态与词典原型不一致时，沿用词卡上那个 `said →` 标记
   const inflected = hw.surface.toLowerCase() !== hw.word.toLowerCase()
@@ -17,7 +47,8 @@ function Card({ hw, context }: { hw: HardWord; context: string }) {
     const next = !open
     setOpen(next)
     // 上下文释义按需触发：只有展开且尚未取过时才调 LLM。
-    // 这是「段落模式 LLM 调用恒为 1」的关键 —— 拆解本身不调模型。
+    // 拆解本身不调模型；仅两处会触发 LLM——展开看本句含义，以及上面那个
+    // 「词库没命中的词补一次完整查词（可能走 AI 兜底）」。
     if (!next || explanation !== null || busy) return
     setBusy(true)
     try {
@@ -61,20 +92,22 @@ function Card({ hw, context }: { hw: HardWord; context: string }) {
             <span className="text-[1.125rem] font-semibold tracking-[-0.01em] text-ink">
               {hw.word}
             </span>
-            {hw.phonetic && (
-              <span className="font-mono text-[0.8125rem] text-ink-2">{hw.phonetic}</span>
+            {phonetic && (
+              <span className="font-mono text-[0.8125rem] text-ink-2">{phonetic}</span>
             )}
           </span>
 
-          {hw.senses.length > 0 ? (
+          {senses.length > 0 ? (
             <span className="mt-1.5 block text-[0.9375rem] leading-[1.6] text-ink-2">
-              {hw.senses
+              {senses
                 .slice(0, 2)
                 .map((s) => (s.pos ? `${s.pos} ${s.meaning}` : s.meaning))
                 .join('；')}
             </span>
+          ) : resolving ? (
+            <span className="mt-1.5 block text-[0.9375rem] text-ink-3">AI 识别中…</span>
           ) : (
-            <span className="mt-1.5 block text-[0.9375rem] text-ink-3">词典未收录</span>
+            <span className="mt-1.5 block text-[0.9375rem] text-ink-3">词典与 AI 均未收录</span>
           )}
         </button>
         <div className="p-3.5 pl-2">
