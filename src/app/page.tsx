@@ -9,6 +9,7 @@ import type { HardWord } from '@/lib/hardwords/extract'
 import type { Direction, ProviderName } from '@/lib/translate/types'
 import { getLocalModelConfig, streamLocalTranslate } from '@/lib/translate/localModel'
 import { lookupWordClient } from '@/lib/dict/clientLookup'
+import { addHistory } from '@/lib/history/store'
 
 const DIRECTIONS: { value: Direction; label: string }[] = [
   { value: 'en2zh', label: '英 → 中' },
@@ -64,6 +65,13 @@ export default function HomePage() {
       return
     }
     setDetail(result)
+    // 记历史：单词的「译文」就是它的中文释义，逐条用 · 连接；未收录则不记
+    if (result.senses.length > 0) {
+      const line = result.senses
+        .map((s) => (s.pos ? `${s.pos} ${s.meaning}` : s.meaning))
+        .join('；')
+      addHistory(result.word, line)
+    }
   }
 
   async function translateText(text: string) {
@@ -87,10 +95,14 @@ export default function HomePage() {
     // 配置了本地模型就由浏览器直连它（覆盖服务端）；否则走默认后端。
     const local = getLocalModelConfig()
 
+    // 本地累加完整译文，流结束后记一条历史（state 更新是异步的，不能直接读 translation）
+    let full = ''
+
     try {
       if (local) {
         setProvider('local')
         for await (const delta of streamLocalTranslate(text, direction, local)) {
+          full += delta
           setTranslation((t) => t + delta)
         }
       } else {
@@ -123,8 +135,10 @@ export default function HomePage() {
                 type: string
                 value?: string
               }
-              if (evt.type === 'delta') setTranslation((t) => t + (evt.value ?? ''))
-              else if (evt.type === 'error') setError(`响应中断：${evt.value}`)
+              if (evt.type === 'delta') {
+                full += evt.value ?? ''
+                setTranslation((t) => t + (evt.value ?? ''))
+              } else if (evt.type === 'error') setError(`响应中断：${evt.value}`)
             } catch {
               // 单帧解析失败不该毁掉整段译文，跳过继续读
             }
@@ -139,6 +153,8 @@ export default function HomePage() {
       )
     } finally {
       setStreaming(false)
+      // 收到了译文就记历史（哪怕中途报错也保留已得部分；难词不参与）
+      if (full.trim()) addHistory(text, full)
       await hardWordsPromise
     }
   }

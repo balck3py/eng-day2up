@@ -6,6 +6,7 @@ import { createBrowserSupabase } from '@/lib/supabase/client'
 
 const LINKS = [
   { href: '/', label: '翻译' },
+  { href: '/history', label: '历史' },
   { href: '/wordbook', label: '单词本' },
   { href: '/settings', label: '设置' },
 ]
