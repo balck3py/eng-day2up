@@ -1,9 +1,10 @@
 'use client'
 
-import { useCallback, useEffect, useId, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import Link from 'next/link'
 import type { WordbookEntry } from '@/lib/wordbook/types'
 import { AudioButton } from '@/components/AudioButton'
+import { lookupWordClient } from '@/lib/dict/clientLookup'
 
 export default function WordbookPage() {
   const searchId = useId()
@@ -34,6 +35,53 @@ export default function WordbookPage() {
     const t = setTimeout(() => void load(query), 250) // 输入防抖
     return () => clearTimeout(t)
   }, [query, load])
+
+  // 没有中文释义的词：每次打开单词本都尝试查词/AI 兜底补全，并写回词库（补全存储），
+  // 下次打开即命中、无需再查。attempted 防止同一次挂载内对同一个词重复发起。
+  const attempted = useRef<Set<string>>(new Set())
+  const [resolving, setResolving] = useState<Set<string>>(new Set())
+  const toggleResolving = (key: string, on: boolean) =>
+    setResolving((prev) => {
+      const next = new Set(prev)
+      if (on) next.add(key)
+      else next.delete(key)
+      return next
+    })
+
+  useEffect(() => {
+    const pending = entries.filter(
+      (e) => e.senses.length === 0 && !attempted.current.has(e.wordKey),
+    )
+    if (pending.length === 0) return
+    let alive = true
+    for (const e of pending) {
+      attempted.current.add(e.wordKey)
+      toggleResolving(e.wordKey, true)
+      void (async () => {
+        try {
+          const d = await lookupWordClient(e.word)
+          if (!alive || !d || d.senses.length === 0) return
+          const phonetic = d.phonetic ?? d.phoneticUs ?? d.phoneticUk ?? null
+          setEntries((list) =>
+            list.map((x) =>
+              x.id === e.id ? { ...x, senses: d.senses, phonetic: phonetic ?? x.phonetic } : x,
+            ),
+          )
+          // 补全存储：把释义写回词库（按该词 word_key），下次打开直接命中
+          void fetch('/api/ai-entry', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ word: e.word, senses: d.senses, phonetic }),
+          }).catch(() => {})
+        } finally {
+          if (alive) toggleResolving(e.wordKey, false)
+        }
+      })()
+    }
+    return () => {
+      alive = false
+    }
+  }, [entries])
 
   async function remove(id: string) {
     const res = await fetch(`/api/wordbook/${id}`, { method: 'DELETE' })
@@ -98,8 +146,10 @@ export default function WordbookPage() {
                       </li>
                     ))}
                   </ul>
+                ) : resolving.has(e.wordKey) ? (
+                  <p className="mt-1 text-[0.8125rem] text-ink-3">释义补全中…</p>
                 ) : (
-                  <p className="mt-1 text-[0.8125rem] text-ink-3">词库暂无中文释义</p>
+                  <p className="mt-1 text-[0.8125rem] text-ink-3">词库与 AI 均暂无释义</p>
                 )}
                 {e.sourceContext && (
                   <p className="mt-1.5 line-clamp-2 text-[0.875rem] leading-[1.6] text-ink-3">
