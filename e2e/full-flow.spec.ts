@@ -98,6 +98,8 @@ test('复习流程走完一轮并更新熟练度', async ({ page }) => {
   await expect(page.getByText('共 3 个单词')).toBeVisible()
 
   await page.getByRole('radio', { name: '顺序' }).click()
+  // 锁成纯英译中：这些测试词没有中文释义，混合比例下会被跳过
+  await page.getByLabel('题型比例').fill('0')
   await page.getByRole('button', { name: '开始' }).click()
 
   for (let i = 1; i <= 3; i++) {
@@ -122,6 +124,8 @@ test('随机模式打乱顺序', async ({ page }) => {
   async function firstCardWord(): Promise<string> {
     await page.goto('/review')
     await page.getByRole('radio', { name: '随机' }).click()
+    // 锁成纯英译中：这些测试词没有中文释义，混合比例下会被跳过
+    await page.getByLabel('题型比例').fill('0')
     await page.getByRole('button', { name: '开始' }).click()
     return (await page.getByTestId('review-word').first().textContent()) ?? ''
   }
@@ -130,4 +134,103 @@ test('随机模式打乱顺序', async ({ page }) => {
   const seen = new Set<string>()
   for (let i = 0; i < 3; i++) seen.add(await firstCardWord())
   expect(seen.size).toBeGreaterThan(1)
+})
+
+test('题型比例滑杆实时显示百分比', async ({ page }) => {
+  await page.request.post('/api/wordbook', { data: { word: 'serendipity' } })
+
+  await page.goto('/review')
+  await expect(page.getByText('英译中 50% · 中译英 50%')).toBeVisible()
+  await page.getByLabel('题型比例').fill('30')
+  await expect(page.getByText('英译中 70% · 中译英 30%')).toBeVisible()
+})
+
+test('中译英答对', async ({ page }) => {
+  await page.request.post('/api/wordbook', { data: { word: 'serendipity' } })
+
+  // 中译英的题面就是中文释义 —— 词库里没释义的话这个用例本身没意义，先确认
+  const res = await page.request.get('/api/wordbook')
+  const { entries } = (await res.json()) as { entries: { senses: unknown[] }[] }
+  expect(entries[0].senses.length).toBeGreaterThan(0)
+
+  await page.goto('/review')
+  await page.getByLabel('题型比例').fill('100')
+  await page.getByRole('button', { name: '开始' }).click()
+
+  // 作答前不能泄题：英文单词一次都不该出现在页面上
+  await expect(page.getByText('serendipity', { exact: true })).toHaveCount(0)
+
+  // 大小写与尾部标点都该被宽松匹配吃掉
+  await page.getByLabel('输入英文单词').fill('Serendipity.')
+  await page.getByRole('button', { name: '提交' }).click()
+
+  await expect(page.getByText('答对')).toBeVisible()
+  await expect(page.getByTestId('review-answer')).toHaveText('serendipity')
+
+  // 判定后回车进下一张 —— 只有一个词，直接到结算页
+  await page.keyboard.press('Enter')
+  await expect(page.getByText('本轮完成')).toBeVisible()
+  await expect(page.getByText(/认识 1/)).toBeVisible()
+})
+
+test('中译英答错时显示正确答案与用户输入', async ({ page }) => {
+  await page.request.post('/api/wordbook', { data: { word: 'serendipity' } })
+
+  await page.goto('/review')
+  await page.getByLabel('题型比例').fill('100')
+  await page.getByRole('button', { name: '开始' }).click()
+
+  await page.getByLabel('输入英文单词').fill('serendipty')
+  await page.getByRole('button', { name: '提交' }).click()
+
+  await expect(page.getByText('答错')).toBeVisible()
+  await expect(page.getByTestId('review-answer')).toHaveText('serendipity')
+  await expect(page.getByTestId('review-wrong-input')).toHaveText('serendipty')
+
+  await page.getByRole('button', { name: /下一个/ }).click()
+  await expect(page.getByText('本轮完成')).toBeVisible()
+  await expect(page.getByText(/不认识 1/)).toBeVisible()
+})
+
+test('中译英卡片上空格进输入框，不触发翻面', async ({ page }) => {
+  await page.request.post('/api/wordbook', { data: { word: 'serendipity' } })
+
+  await page.goto('/review')
+  await page.getByLabel('题型比例').fill('100')
+  await page.getByRole('button', { name: '开始' }).click()
+
+  const input = page.getByLabel('输入英文单词')
+  await input.click()
+  await page.keyboard.type('a b')
+  await expect(input).toHaveValue('a b')
+  // 还停在作答态，没有被空格翻出答案
+  await expect(page.getByRole('button', { name: '提交' })).toBeVisible()
+})
+
+test('无中文释义的词在中译英轮次里被跳过并提示', async ({ page }) => {
+  // zzqx 前缀保证词库里查不到，从而没有中文释义
+  for (const w of ['zzqxfoo', 'zzqxbar', 'zzqxbaz']) {
+    await page.request.post('/api/wordbook', { data: { word: w } })
+  }
+  await page.request.post('/api/wordbook', { data: { word: 'serendipity' } })
+
+  await page.goto('/review')
+  await page.getByLabel('题型比例').fill('100')
+  await page.getByRole('button', { name: '开始' }).click()
+
+  await expect(page.getByText('本轮 1 个 · 3 个无中文释义已跳过')).toBeVisible()
+})
+
+test('全部无中文释义 + 纯中译英时不崩溃，提示调整比例', async ({ page }) => {
+  for (const w of ['zzqxfoo', 'zzqxbar']) {
+    await page.request.post('/api/wordbook', { data: { word: w } })
+  }
+
+  await page.goto('/review')
+  await page.getByLabel('题型比例').fill('100')
+  await page.getByRole('button', { name: '开始' }).click()
+
+  await expect(page.getByText(/出不了中译英题/)).toBeVisible()
+  // 留在设置页，能改完比例重来
+  await expect(page.getByRole('button', { name: '开始' })).toBeVisible()
 })
