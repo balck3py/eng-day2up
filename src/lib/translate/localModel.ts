@@ -40,12 +40,51 @@ export function getLocalModelConfig(): LocalModelConfig | null {
   }
 }
 
+type Listener = () => void
+
+const listeners = new Set<Listener>()
+/** 缓存的快照。useSyncExternalStore 要求同一状态下返回同一引用，
+    而 getLocalModelConfig() 每次都新建对象，直接喂给它会无限重渲染。
+    undefined 表示「尚未缓存」，null 是「确实没有配置」这个合法值。 */
+let cached: LocalModelConfig | null | undefined = undefined
+
+/** 配置被改动后调用：作废缓存并通知订阅者。 */
+function emit(): void {
+  cached = undefined
+  for (const l of listeners) l()
+}
+
+export function subscribeLocalModelConfig(listener: Listener): () => void {
+  listeners.add(listener)
+  // 同一浏览器的其他标签页改了配置，这边也要跟着刷新
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === STORAGE_KEY) emit()
+  }
+  window.addEventListener('storage', onStorage)
+  return () => {
+    listeners.delete(listener)
+    window.removeEventListener('storage', onStorage)
+  }
+}
+
+export function getLocalModelConfigSnapshot(): LocalModelConfig | null {
+  if (cached === undefined) cached = getLocalModelConfig()
+  return cached
+}
+
+/** 服务端读不到 localStorage，恒为「未配置」。 */
+export function getLocalModelConfigServerSnapshot(): LocalModelConfig | null {
+  return null
+}
+
 export function saveLocalModelConfig(cfg: LocalModelConfig): void {
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg))
+  emit()
 }
 
 export function clearLocalModelConfig(): void {
   window.localStorage.removeItem(STORAGE_KEY)
+  emit()
 }
 
 /** 拼出 /chat/completions 端点，容忍 base_url 末尾有无斜杠。 */

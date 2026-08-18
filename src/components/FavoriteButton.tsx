@@ -19,12 +19,19 @@ export function FavoriteButton({
   const [entryId, setEntryId] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [syncedWord, setSyncedWord] = useState(word)
 
-  // 挂载/换词时同步已收藏态：按 word_key 精确查这个词是否已在单词本里。
-  useEffect(() => {
-    let alive = true
+  // 换词时先清掉上一个词的收藏态。放在渲染期而不是 effect 里：effect 里 setState
+  // 会多一轮级联渲染，中间那一帧显示的还是上一个词的星标。
+  if (syncedWord !== word) {
+    setSyncedWord(word)
     setSaved(false)
     setEntryId(null)
+  }
+
+  // 按 word_key 精确查这个词是否已在单词本里。
+  useEffect(() => {
+    let alive = true
     void fetch(`/api/wordbook?word=${encodeURIComponent(word)}`)
       .then((r) => (r.ok ? r.json() : { entries: [] }))
       .then((d: { entries: { id: string }[] }) => {

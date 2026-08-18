@@ -234,3 +234,54 @@ test('全部无中文释义 + 纯中译英时不崩溃，提示调整比例', as
   // 留在设置页，能改完比例重来
   await expect(page.getByRole('button', { name: '开始' })).toBeVisible()
 })
+
+test('翻译历史记录一条，可删除', async ({ page }) => {
+  await mainInput(page).fill('apple')
+  await page.getByRole('button', { name: '翻译' }).click()
+  await expect(page.getByRole('heading', { name: 'apple' })).toBeVisible()
+
+  await page.goto('/history')
+  // 历史读的是 localStorage，走 useSyncExternalStore 在 hydration 后回填
+  await expect(page.getByRole('button', { name: '删除记录 apple' })).toBeVisible()
+
+  await page.getByRole('button', { name: '删除记录 apple' }).click()
+  await expect(page.getByText('还没有翻译记录', { exact: false })).toBeVisible()
+})
+
+test('翻译历史可一键清空', async ({ page }) => {
+  await mainInput(page).fill('apple')
+  await page.getByRole('button', { name: '翻译' }).click()
+  await expect(page.getByRole('heading', { name: 'apple' })).toBeVisible()
+
+  await page.goto('/history')
+  await expect(page.getByRole('button', { name: '删除记录 apple' })).toBeVisible()
+
+  await page.getByRole('button', { name: '清空' }).click()
+  await expect(page.getByText('还没有翻译记录', { exact: false })).toBeVisible()
+})
+
+test('本地模型配置保存后回显，清除后复位', async ({ page }) => {
+  const BASE = 'http://localhost:11434/v1'
+  const url = page.getByPlaceholder(BASE)
+  const model = page.getByPlaceholder('qwen2.5:7b')
+
+  await page.goto('/settings')
+  await expect(page.getByText('当前：翻译走默认后端（未配置本地模型）')).toBeVisible()
+
+  await url.fill(BASE)
+  await model.fill('qwen2.5:7b')
+  await page.getByRole('button', { name: '保存' }).click()
+  await expect(page.getByText('已保存')).toBeVisible()
+  await expect(page.getByText('当前：翻译走本地模型')).toBeVisible()
+
+  // 刷新后回显 —— 正是 hydration 后由外部 store 同步表单的那条路径
+  await page.reload()
+  await expect(url).toHaveValue(BASE)
+  await expect(model).toHaveValue('qwen2.5:7b')
+  await expect(page.getByText('当前：翻译走本地模型')).toBeVisible()
+
+  await page.getByRole('button', { name: '清除配置' }).click()
+  await expect(url).toHaveValue('')
+  await expect(model).toHaveValue('')
+  await expect(page.getByText('当前：翻译走默认后端（未配置本地模型）')).toBeVisible()
+})

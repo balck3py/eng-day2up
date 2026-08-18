@@ -1,56 +1,82 @@
 'use client'
 
-import { useEffect, useId, useState } from 'react'
+import { useId, useState, useSyncExternalStore } from 'react'
 import {
-  getLocalModelConfig,
+  subscribeLocalModelConfig,
+  getLocalModelConfigSnapshot,
+  getLocalModelConfigServerSnapshot,
   saveLocalModelConfig,
   clearLocalModelConfig,
+  type LocalModelConfig,
 } from '@/lib/translate/localModel'
+
+interface FormState {
+  baseUrl: string
+  model: string
+  apiKey: string
+  prompt: string
+}
+
+const EMPTY_FORM: FormState = { baseUrl: '', model: '', apiKey: '', prompt: '' }
+
+function toForm(cfg: LocalModelConfig | null): FormState {
+  if (!cfg) return EMPTY_FORM
+  return {
+    baseUrl: cfg.baseUrl,
+    model: cfg.model,
+    apiKey: cfg.apiKey ?? '',
+    prompt: cfg.prompt ?? '',
+  }
+}
 
 export default function SettingsPage() {
   const baseId = useId()
-  const [baseUrl, setBaseUrl] = useState('')
-  const [model, setModel] = useState('')
-  const [apiKey, setApiKey] = useState('')
-  const [prompt, setPrompt] = useState('')
-  const [saved, setSaved] = useState(false)
-  const [enabled, setEnabled] = useState(false)
+  // 配置存 localStorage，服务端渲染读不到。订阅外部 store 而不是在 effect 里
+  // setState —— 后者会多一轮级联渲染。
+  const stored = useSyncExternalStore(
+    subscribeLocalModelConfig,
+    getLocalModelConfigSnapshot,
+    getLocalModelConfigServerSnapshot,
+  )
 
-  useEffect(() => {
-    const cfg = getLocalModelConfig()
-    if (cfg) {
-      setBaseUrl(cfg.baseUrl)
-      setModel(cfg.model)
-      setApiKey(cfg.apiKey ?? '')
-      setPrompt(cfg.prompt ?? '')
-      setEnabled(true)
-    }
-  }, [])
+  const [form, setForm] = useState<FormState>(() => toForm(stored))
+  const [syncedFrom, setSyncedFrom] = useState(stored)
+  const [saved, setSaved] = useState(false)
+
+  // 渲染期同步表单：hydration 完成后 stored 会从 null 变成真实配置，保存/清除
+  // 之后也会变。这是 React 文档里「外部值变化时调整 state」的写法，React 会在
+  // 提交前就地重渲染，不会闪一帧旧值。
+  if (syncedFrom !== stored) {
+    setSyncedFrom(stored)
+    setForm(toForm(stored))
+  }
+
+  const enabled = stored !== null
+
+  function update<K extends keyof FormState>(key: K, value: FormState[K]) {
+    setForm((f) => ({ ...f, [key]: value }))
+  }
 
   function save() {
-    if (!baseUrl.trim() || !model.trim()) return
+    if (!canSave) return
+    // 写完由 store 通知回来，表单会被上面的渲染期同步刷成规范化后的值
     saveLocalModelConfig({
-      baseUrl: baseUrl.trim(),
-      model: model.trim(),
-      apiKey: apiKey.trim() || undefined,
-      prompt: prompt.trim() || undefined,
+      baseUrl: form.baseUrl.trim(),
+      model: form.model.trim(),
+      apiKey: form.apiKey.trim() || undefined,
+      prompt: form.prompt.trim() || undefined,
     })
-    setEnabled(true)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
 
   function reset() {
+    // 同上：清除后 stored 变 null，表单被同步清空
     clearLocalModelConfig()
-    setBaseUrl('')
-    setModel('')
-    setApiKey('')
-    setPrompt('')
-    setEnabled(false)
     setSaved(false)
   }
 
-  const canSave = baseUrl.trim() !== '' && model.trim() !== ''
+  const canSave = form.baseUrl.trim() !== '' && form.model.trim() !== ''
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-5 py-10 sm:px-6">
@@ -79,8 +105,8 @@ export default function SettingsPage() {
           </span>
           <input
             id={`${baseId}-url`}
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
+            value={form.baseUrl}
+            onChange={(e) => update('baseUrl', e.target.value)}
             placeholder="http://localhost:11434/v1"
             className="rounded-[10px] border border-rule bg-card px-3 py-2 font-mono text-[0.9375rem] text-ink placeholder:text-ink-3 focus:border-focus"
           />
@@ -94,8 +120,8 @@ export default function SettingsPage() {
             模型名 <span className="text-seal">*</span>
           </span>
           <input
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
+            value={form.model}
+            onChange={(e) => update('model', e.target.value)}
             placeholder="qwen2.5:7b"
             className="rounded-[10px] border border-rule bg-card px-3 py-2 font-mono text-[0.9375rem] text-ink placeholder:text-ink-3 focus:border-focus"
           />
@@ -105,8 +131,8 @@ export default function SettingsPage() {
           <span className="text-[0.875rem] font-medium text-ink">API Key（可选）</span>
           <input
             type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
+            value={form.apiKey}
+            onChange={(e) => update('apiKey', e.target.value)}
             placeholder="本地 ollama 通常不需要"
             className="rounded-[10px] border border-rule bg-card px-3 py-2 font-mono text-[0.9375rem] text-ink placeholder:text-ink-3 focus:border-focus"
           />
@@ -115,8 +141,8 @@ export default function SettingsPage() {
         <label className="flex flex-col gap-1.5">
           <span className="text-[0.875rem] font-medium text-ink">翻译提示词（可选）</span>
           <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
+            value={form.prompt}
+            onChange={(e) => update('prompt', e.target.value)}
             rows={4}
             placeholder="留空则用内置的按方向提示词"
             className="rounded-[10px] border border-rule bg-card px-3 py-2 text-[0.9375rem] leading-[1.7] text-ink placeholder:text-ink-3 focus:border-focus"
