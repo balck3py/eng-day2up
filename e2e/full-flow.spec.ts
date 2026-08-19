@@ -3,6 +3,16 @@ import { test, expect, type Page } from '@playwright/test'
 const EMAIL = process.env.E2E_EMAIL!
 const PASSWORD = process.env.E2E_PASSWORD!
 
+// 这个套件的 beforeEach 会**清空** E2E_EMAIL 账号的整个单词本，且是硬删除、
+// 不可恢复。它曾经指向一个真实使用中的账号，跑一次就把真实单词本删光了。
+// 除非确认 E2E_EMAIL 是专用的一次性测试账号，否则直接拒跑。
+if (process.env.E2E_DESTRUCTIVE_OK !== '1') {
+  throw new Error(
+    `e2e 会清空账号 ${EMAIL} 的整个单词本（硬删除，不可恢复）。\n` +
+      '确认它是专用测试账号后，在 .env.local 里设 E2E_DESTRUCTIVE_OK=1 再跑。',
+  )
+}
+
 const PARAGRAPH =
   'The committee deferred the decision pending further review of the ' +
   'unprecedented anomalies discovered in the quarterly reconciliation.'
