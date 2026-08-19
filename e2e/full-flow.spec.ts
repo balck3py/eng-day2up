@@ -22,6 +22,17 @@ function mainInput(page: Page) {
   return page.getByPlaceholder(/输入/)
 }
 
+/**
+ * 等流式译文真正写完。只断言「译文里出现了中文」是不够的 —— page.tsx 里
+ * addHistory 是在流结束后才调用的，那时历史里还没有这条记录。
+ * 流式光标（.streaming-caret）消失才是真的写完了。
+ */
+async function waitForTranslationDone(page: Page) {
+  const translation = page.locator('section', { hasText: '译文' })
+  await expect(translation).toContainText(/[一-龥]{8,}/, { timeout: 45_000 })
+  await expect(page.locator('.streaming-caret')).toHaveCount(0, { timeout: 45_000 })
+}
+
 async function login(page: Page) {
   await page.goto('/login')
   await page.getByPlaceholder('邮箱').fill(EMAIL)
@@ -314,14 +325,46 @@ test('历史页可把单词收藏进单词本', async ({ page }) => {
 test('整段翻译的历史记录不出收藏按钮', async ({ page }) => {
   await mainInput(page).fill(PARAGRAPH)
   await page.getByRole('button', { name: '翻译' }).click()
-  // 整段的历史是流式译文写完才记的（page.tsx 里 addHistory 在流结束后调用），
-  // 只等「难词」标题会太早 —— 那时候历史还是空的
-  const translation = page.locator('section', { hasText: '译文' })
-  await expect(translation).toContainText(/[一-龥]{8,}/, { timeout: 45_000 })
+  await waitForTranslationDone(page)
 
   await page.goto('/history')
   // 有这条记录
   await expect(page.getByRole('button', { name: /删除记录/ })).toBeVisible()
-  // 但没有收藏按钮 —— 整段原文不是单词
+  // 没有单词的一键收藏按钮 —— 整段原文不是单词
   await expect(page.getByRole('button', { name: /到单词本$/ })).toHaveCount(0)
+  // 取而代之的是挑词面板入口
+  await expect(page.getByRole('button', { name: '挑词收藏' })).toBeVisible()
+})
+
+test('段落挑词：多选后批量收藏，已收藏的词被标记', async ({ page }) => {
+  await mainInput(page).fill(PARAGRAPH)
+  await page.getByRole('button', { name: '翻译' }).click()
+  await waitForTranslationDone(page)
+
+  await page.goto('/history')
+  await page.getByRole('button', { name: '挑词收藏' }).click()
+
+  // 停用词被滤掉。exact 必不可少 —— 默认是子串匹配，'the' 会命中 'further'
+  await expect(page.getByRole('checkbox', { name: 'the', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('checkbox', { name: 'of', exact: true })).toHaveCount(0)
+
+  // 实词在
+  const committee = page.getByRole('checkbox', { name: 'committee', exact: true })
+  const anomalies = page.getByRole('checkbox', { name: 'anomalies', exact: true })
+  await expect(committee).toBeVisible()
+
+  await committee.click()
+  await anomalies.click()
+  await expect(committee).toHaveAttribute('aria-checked', 'true')
+  await page.getByRole('button', { name: '收藏选中的 2 个词' }).click()
+
+  // 存完后这两个词从可选的 checkbox 变成「已收藏」标记
+  await expect(page.getByTestId('picker-saved-committee')).toBeVisible()
+  await expect(page.getByTestId('picker-saved-anomalies')).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: 'committee', exact: true })).toHaveCount(0)
+
+  // 真的进了单词本
+  await page.goto('/wordbook')
+  await expect(page.getByText('committee').first()).toBeVisible()
+  await expect(page.getByText('anomalies').first()).toBeVisible()
 })

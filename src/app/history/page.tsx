@@ -10,6 +10,7 @@ import {
 } from '@/lib/history/store'
 import { isSingleWord } from '@/lib/text/normalize'
 import { HistorySaveButton } from '@/components/HistorySaveButton'
+import { HistoryWordPicker } from '@/components/HistoryWordPicker'
 
 function when(at: number): string {
   const d = new Date(at)
@@ -60,26 +61,29 @@ export default function HistoryPage() {
       {items.length > 0 && (
         <ul className="flex flex-col divide-y divide-rule rounded-[10px] border border-rule bg-card">
           {items.map((h) => (
-            <li key={h.id} className="flex items-start gap-4 px-4 py-3.5">
-              <div className="min-w-0 flex-1">
-                <p className="text-[1rem] leading-[1.6] font-medium break-words text-ink">
-                  {h.source}
-                </p>
-                <p className="mt-1 text-[0.9375rem] leading-[1.7] break-words text-ink-2">
-                  {h.translation}
-                </p>
-                <p className="mt-1.5 font-mono text-[0.75rem] text-ink-3">{when(h.at)}</p>
+            <li key={h.id} className="flex flex-col gap-3 px-4 py-3.5">
+              <div className="flex items-start gap-4">
+                <div className="min-w-0 flex-1">
+                  <p className="text-[1rem] leading-[1.6] font-medium break-words text-ink">
+                    {h.source}
+                  </p>
+                  <p className="mt-1 text-[0.9375rem] leading-[1.7] break-words text-ink-2">
+                    {h.translation}
+                  </p>
+                  <p className="mt-1.5 font-mono text-[0.75rem] text-ink-3">{when(h.at)}</p>
+                </div>
+                {/* 单词记录：一键收藏。整段的原文不是单词，走下面的挑词面板 */}
+                {isSingleWord(h.source) && <HistorySaveButton word={h.source.trim()} />}
+                <button
+                  type="button"
+                  onClick={() => removeHistory(h.id)}
+                  aria-label={`删除记录 ${h.source}`}
+                  className="shrink-0 text-sm text-ink-3 transition-colors hover:text-seal"
+                >
+                  删除
+                </button>
               </div>
-              {/* 整段翻译的原文不是单词，收藏没有意义，只给单词记录出按钮 */}
-              {isSingleWord(h.source) && <HistorySaveButton word={h.source.trim()} />}
-              <button
-                type="button"
-                onClick={() => removeHistory(h.id)}
-                aria-label={`删除记录 ${h.source}`}
-                className="shrink-0 text-sm text-ink-3 transition-colors hover:text-seal"
-              >
-                删除
-              </button>
+              {!isSingleWord(h.source) && <HistoryWordPicker text={h.source} />}
             </li>
           ))}
         </ul>
