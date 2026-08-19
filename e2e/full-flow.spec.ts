@@ -295,3 +295,33 @@ test('本地模型配置保存后回显，清除后复位', async ({ page }) => 
   await expect(model).toHaveValue('')
   await expect(page.getByText('当前：翻译走默认后端（未配置本地模型）')).toBeVisible()
 })
+
+test('历史页可把单词收藏进单词本', async ({ page }) => {
+  // 先查一个词，让它进历史
+  await mainInput(page).fill('serendipity')
+  await page.getByRole('button', { name: '翻译' }).click()
+  await expect(page.getByRole('heading', { name: 'serendipity' })).toBeVisible()
+
+  await page.goto('/history')
+  await page.getByRole('button', { name: '收藏 serendipity 到单词本' }).click()
+  await expect(page.getByTestId('history-saved')).toBeVisible()
+
+  // 真的进了单词本
+  await page.goto('/wordbook')
+  await expect(page.getByText('serendipity').first()).toBeVisible()
+})
+
+test('整段翻译的历史记录不出收藏按钮', async ({ page }) => {
+  await mainInput(page).fill(PARAGRAPH)
+  await page.getByRole('button', { name: '翻译' }).click()
+  // 整段的历史是流式译文写完才记的（page.tsx 里 addHistory 在流结束后调用），
+  // 只等「难词」标题会太早 —— 那时候历史还是空的
+  const translation = page.locator('section', { hasText: '译文' })
+  await expect(translation).toContainText(/[一-龥]{8,}/, { timeout: 45_000 })
+
+  await page.goto('/history')
+  // 有这条记录
+  await expect(page.getByRole('button', { name: /删除记录/ })).toBeVisible()
+  // 但没有收藏按钮 —— 整段原文不是单词
+  await expect(page.getByRole('button', { name: /到单词本$/ })).toHaveCount(0)
+})

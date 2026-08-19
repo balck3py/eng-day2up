@@ -8,6 +8,8 @@ import {
   removeHistory,
   clearHistory,
 } from '@/lib/history/store'
+import { isSingleWord } from '@/lib/text/normalize'
+import { HistorySaveButton } from '@/components/HistorySaveButton'
 
 function when(at: number): string {
   const d = new Date(at)
@@ -68,6 +70,8 @@ export default function HistoryPage() {
                 </p>
                 <p className="mt-1.5 font-mono text-[0.75rem] text-ink-3">{when(h.at)}</p>
               </div>
+              {/* 整段翻译的原文不是单词，收藏没有意义，只给单词记录出按钮 */}
+              {isSingleWord(h.source) && <HistorySaveButton word={h.source.trim()} />}
               <button
                 type="button"
                 onClick={() => removeHistory(h.id)}
