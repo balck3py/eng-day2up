@@ -213,6 +213,64 @@ test('中译英答错时显示正确答案与用户输入', async ({ page }) => 
   await expect(page.getByText(/不认识 1/)).toBeVisible()
 })
 
+test('中译英拼不出来时直接选「不认识」看答案', async ({ page }) => {
+  await page.request.post('/api/wordbook', { data: { word: 'serendipity' } })
+
+  await page.goto('/review')
+  await page.getByLabel('题型比例').fill('100')
+  await page.getByRole('button', { name: '开始' }).click()
+
+  // 一个字都没打，也不该被卡住
+  await page.getByRole('button', { name: '不认识', exact: true }).click()
+  await expect(page.getByTestId('review-answer')).toHaveText('serendipity')
+
+  await page.getByRole('button', { name: /下一个/ }).click()
+  await expect(page.getByText('本轮完成')).toBeVisible()
+  await expect(page.getByText(/不认识 1/)).toBeVisible()
+})
+
+test('中译英答错后可以改一下重答', async ({ page }) => {
+  await page.request.post('/api/wordbook', { data: { word: 'serendipity' } })
+
+  await page.goto('/review')
+  await page.getByLabel('题型比例').fill('100')
+  await page.getByRole('button', { name: '开始' }).click()
+
+  await page.getByLabel('输入英文单词').fill('serendipty')
+  await page.getByRole('button', { name: '提交' }).click()
+  await expect(page.getByText('答错')).toBeVisible()
+
+  // 回到输入框，原文还在，改对了重新提交
+  await page.getByRole('button', { name: '改一下' }).click()
+  const input = page.getByLabel('输入英文单词')
+  await expect(input).toHaveValue('serendipty')
+  await input.fill('serendipity')
+  await page.getByRole('button', { name: '提交' }).click()
+  await expect(page.getByText('答对')).toBeVisible()
+
+  // 只写一次熟练度：改判前的那次答错不该也记一笔
+  await page.getByRole('button', { name: /下一个/ }).click()
+  await expect(page.getByText('本轮完成')).toBeVisible()
+  await expect(page.getByText(/共 1 个 · 认识 1 · 不认识 0/)).toBeVisible()
+})
+
+test('中译英判定后可以手动改成「认识」', async ({ page }) => {
+  await page.request.post('/api/wordbook', { data: { word: 'serendipity' } })
+
+  await page.goto('/review')
+  await page.getByLabel('题型比例').fill('100')
+  await page.getByRole('button', { name: '开始' }).click()
+
+  await page.getByLabel('输入英文单词').fill('serendipty')
+  await page.getByRole('button', { name: '提交' }).click()
+  await expect(page.getByText('答错')).toBeVisible()
+
+  await page.getByRole('button', { name: /^认识/ }).click()
+  await page.getByRole('button', { name: /下一个/ }).click()
+  await expect(page.getByText('本轮完成')).toBeVisible()
+  await expect(page.getByText(/共 1 个 · 认识 1 · 不认识 0/)).toBeVisible()
+})
+
 test('中译英卡片上空格进输入框，不触发翻面', async ({ page }) => {
   await page.request.post('/api/wordbook', { data: { word: 'serendipity' } })
 

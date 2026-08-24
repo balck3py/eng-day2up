@@ -56,7 +56,7 @@ export default function ReviewPage() {
     setPhase('reviewing')
   }
 
-  /** 只记分与提交，不推进游标 —— 中译英要停下来给用户看正确答案 */
+  /** 只记分与提交，不推进游标 */
   const mark = useCallback(
     (known: boolean) => {
       const entry = queue[cursor]
@@ -80,7 +80,7 @@ export default function ReviewPage() {
     else setCursor(cursor + 1)
   }, [cursor, queue.length])
 
-  /** 英译中标记完即翻页，保持原来的节奏 */
+  /** 标记完即翻页。中译英卡片自己停在答案页，只在用户点「下一个」时才叫它 */
   const markAndNext = useCallback(
     (known: boolean) => {
       mark(known)
@@ -213,7 +213,7 @@ export default function ReviewPage() {
       {entry.type === 'en2cn' ? (
         <ReviewFlipCard key={cursor} card={entry.item} onMark={markAndNext} />
       ) : (
-        <ReviewInputCard key={cursor} card={entry.item} onMark={mark} onNext={next} />
+        <ReviewInputCard key={cursor} card={entry.item} onDone={markAndNext} />
       )}
     </main>
   )
