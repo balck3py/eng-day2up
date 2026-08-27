@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { orderCards, type ReviewMode } from '@/lib/review/order'
 import { assignQuizTypes, type ReviewCard } from '@/lib/review/quiz'
@@ -26,7 +26,16 @@ export default function ReviewPage() {
   const [skipped, setSkipped] = useState(0)
   const [notice, setNotice] = useState<string | null>(null)
   const [cursor, setCursor] = useState(0)
-  const [stats, setStats] = useState({ known: 0, unknown: 0 })
+  /**
+   * 每张卡当前记下的「认识 / 不认识」，键是卡在 queue 里的下标。
+   * 有了上一个 / 下一个导航，同一张卡会被翻到不止一次，判定必须能改写、
+   * 能回看，所以按下标存，而不是加加减减地累计计数。
+   */
+  const [verdicts, setVerdicts] = useState<Record<number, boolean>>({})
+  // 判定要在事件里被同步读到（选完立刻翻页那条路），state 赶不上，另存一份
+  const verdictsRef = useRef<Record<number, boolean>>({})
+  /** 已经写进熟练度的那些卡，值是写进去的判定，用来避免重复写库 */
+  const markedRef = useRef<Record<number, boolean>>({})
 
   useEffect(() => {
     void fetch('/api/wordbook')
@@ -52,19 +61,33 @@ export default function ReviewPage() {
     setQueue(cards)
     setSkipped(ordered.length - cards.length)
     setCursor(0)
-    setStats({ known: 0, unknown: 0 })
+    verdictsRef.current = {}
+    markedRef.current = {}
+    setVerdicts({})
     setPhase('reviewing')
   }
 
-  /** 只记分与提交，不推进游标 */
-  const mark = useCallback(
+  /** 选定当前这张卡的判定。只落在本地：来回翻看不该反复写库 */
+  const setVerdict = useCallback(
     (known: boolean) => {
-      const entry = queue[cursor]
+      verdictsRef.current = { ...verdictsRef.current, [cursor]: known }
+      setVerdicts(verdictsRef.current)
+    },
+    [cursor],
+  )
+
+  /**
+   * 离开某张卡时才把判定写进熟练度，同一个值只写一次 —— 接口每调一次
+   * review_count 就加一，翻回去看两眼不该算成复习了两遍。
+   */
+  const commit = useCallback(
+    (index: number) => {
+      const known = verdictsRef.current[index]
+      if (known === undefined) return
+      if (markedRef.current[index] === known) return
+      const entry = queue[index]
       if (!entry) return
-      setStats((s) => ({
-        known: s.known + (known ? 1 : 0),
-        unknown: s.unknown + (known ? 0 : 1),
-      }))
+      markedRef.current[index] = known
       // 不等待接口返回 —— 标记失败不该阻塞复习节奏
       void fetch('/api/review/mark', {
         method: 'POST',
@@ -72,21 +95,29 @@ export default function ReviewPage() {
         body: JSON.stringify({ id: entry.item.id, known }),
       })
     },
-    [queue, cursor],
+    [queue],
   )
 
-  const next = useCallback(() => {
-    if (cursor + 1 >= queue.length) setPhase('done')
-    else setCursor(cursor + 1)
-  }, [cursor, queue.length])
+  const go = useCallback(
+    (target: number) => {
+      commit(cursor)
+      if (target >= queue.length) setPhase('done')
+      else setCursor(Math.max(0, target))
+    },
+    [commit, cursor, queue.length],
+  )
 
-  /** 标记完即翻页。中译英卡片自己停在答案页，只在用户点「下一个」时才叫它 */
+  const prev = useCallback(() => go(cursor - 1), [go, cursor])
+  const next = useCallback(() => go(cursor + 1), [go, cursor])
+
+  /** 英译中的认识 / 不认识：标记并翻页，跟加导航之前一样 */
   const markAndNext = useCallback(
     (known: boolean) => {
-      mark(known)
-      next()
+      setVerdict(known)
+      // setVerdict 已经同步写进 ref，go 里的 commit 拿得到这个新值
+      go(cursor + 1)
     },
-    [mark, next],
+    [setVerdict, go, cursor],
   )
 
   if (loading) {
@@ -172,11 +203,15 @@ export default function ReviewPage() {
   }
 
   if (phase === 'done') {
+    // 从 verdicts 现算，别累计 —— 中途改判、翻回去重选都要如实反映在这里。
+    // 一个都没选就翻过去的卡两边都不算，所以两数之和可能小于总数。
+    const chosen = Object.values(verdicts)
+    const known = chosen.filter(Boolean).length
     return (
       <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-4 px-5 py-10 sm:px-6">
         <h2 className="text-lg font-semibold text-ink">本轮完成</h2>
         <p className="text-[0.9375rem] text-ink-2">
-          共 {queue.length} 个 · 认识 {stats.known} · 不认识 {stats.unknown}
+          共 {queue.length} 个 · 认识 {known} · 不认识 {chosen.length - known}
         </p>
         <div className="flex gap-3">
           <button
@@ -209,11 +244,28 @@ export default function ReviewPage() {
         </p>
       )}
 
-      {/* key={cursor}：换卡即重新挂载，翻面/作答状态自然归零 */}
+      {/* key={cursor}：换卡即重新挂载，翻面/作答状态自然归零。判定活在页面上，
+          所以翻回上一张时它还在，卡片只负责把它显示出来 */}
       {entry.type === 'en2cn' ? (
-        <ReviewFlipCard key={cursor} card={entry.item} onMark={markAndNext} />
+        <ReviewFlipCard
+          key={cursor}
+          card={entry.item}
+          verdict={verdicts[cursor] ?? null}
+          onMark={markAndNext}
+          canPrev={cursor > 0}
+          onPrev={prev}
+          onNext={next}
+        />
       ) : (
-        <ReviewInputCard key={cursor} card={entry.item} onDone={markAndNext} />
+        <ReviewInputCard
+          key={cursor}
+          card={entry.item}
+          verdict={verdicts[cursor] ?? null}
+          onVerdict={setVerdict}
+          canPrev={cursor > 0}
+          onPrev={prev}
+          onNext={next}
+        />
       )}
     </main>
   )

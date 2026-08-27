@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import type { WordbookEntry } from '@/lib/wordbook/types'
 import { ReviewCardBack } from '@/components/ReviewCardBack'
+import { ReviewFooter } from '@/components/ReviewFooter'
 
 /**
  * 英译中：正面出英文，点击或空格翻面，翻面后按 1 / 2 标记。
@@ -13,10 +14,19 @@ import { ReviewCardBack } from '@/components/ReviewCardBack'
  */
 export function ReviewFlipCard({
   card,
+  verdict,
   onMark,
+  canPrev,
+  onPrev,
+  onNext,
 }: {
   card: WordbookEntry
+  verdict: boolean | null
+  /** 标记并翻页，跟加上 / 下一个导航之前的行为一样 */
   onMark: (known: boolean) => void
+  canPrev: boolean
+  onPrev: () => void
+  onNext: () => void
 }) {
   const [revealed, setRevealed] = useState(false)
 
@@ -62,24 +72,14 @@ export function ReviewFlipCard({
         )}
       </div>
 
-      {revealed && (
-        <div className="flex gap-3">
-          <button
-            type="button"
-            onClick={() => onMark(false)}
-            className="flex-1 rounded-[10px] border border-rule py-3 text-sm text-ink"
-          >
-            不认识 <span className="font-mono text-[0.75rem] text-ink-3">1</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => onMark(true)}
-            className="flex-1 rounded-[10px] bg-ink py-3 text-sm font-medium text-card"
-          >
-            认识 <span className="font-mono text-[0.75rem] text-card/70">2</span>
-          </button>
-        </div>
-      )}
+      <ReviewFooter
+        canPrev={canPrev}
+        onPrev={onPrev}
+        onNext={onNext}
+        showVerdict={revealed}
+        verdict={verdict}
+        onVerdict={onMark}
+      />
     </>
   )
 }
