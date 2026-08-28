@@ -124,7 +124,7 @@ test('复习流程走完一轮并更新熟练度', async ({ page }) => {
   await page.getByRole('button', { name: '开始' }).click()
 
   for (let i = 1; i <= 3; i++) {
-    await expect(page.getByText(`${i} / 3`)).toBeVisible()
+    await expect(page.getByText(`第 ${i} 张`)).toBeVisible()
     await page.getByText('点击或按空格翻面').click()
     // 「认识」按钮排在「不认识」之后，last() 取到它
     await page.getByRole('button', { name: /认识/ }).last().click()
@@ -135,6 +135,63 @@ test('复习流程走完一轮并更新熟练度', async ({ page }) => {
 
   await page.getByRole('link', { name: '回单词本' }).click()
   await expect(page.getByText(/熟练度 1\/5 · 复习 1 次/).first()).toBeVisible()
+})
+
+test('攒够设定的生词数就收工，后面的词不再出', async ({ page }) => {
+  for (const w of ['alpha', 'beta', 'gamma', 'delta', 'epsilon']) {
+    await page.request.post('/api/wordbook', { data: { word: w } })
+  }
+
+  await page.goto('/review')
+  await page.getByRole('radio', { name: '顺序' }).click()
+  // 这些测试词没有中文释义，锁成纯英译中
+  await page.getByLabel('题型比例').fill('0')
+  await page.getByLabel('今天要复习多少生词').fill('2')
+  await page.getByRole('button', { name: '开始' }).click()
+
+  await expect(page.getByText('生词 0 / 2')).toBeVisible()
+
+  // 第一个标不认识：生词记一个，还没到线
+  await page.getByText('点击或按空格翻面').click()
+  await page.getByRole('button', { name: /^不认识/ }).click()
+  await expect(page.getByText('生词 1 / 2')).toBeVisible()
+
+  // 中间夹一个认识的：不算生词，轮次继续
+  await page.getByText('点击或按空格翻面').click()
+  await page.getByRole('button', { name: /^认识/ }).click()
+  await expect(page.getByText('生词 1 / 2')).toBeVisible()
+  await expect(page.getByText('第 3 张')).toBeVisible()
+
+  // 第二个不认识的一到，立刻收工 —— 单词本里还剩两个词没出
+  await page.getByText('点击或按空格翻面').click()
+  await page.getByRole('button', { name: /^不认识/ }).click()
+  await expect(page.getByText('本轮完成')).toBeVisible()
+  await expect(page.getByText('共 3 个 · 认识 1 · 不认识 2')).toBeVisible()
+})
+
+test('本轮结束后可以把这批词打乱再练一遍', async ({ page }) => {
+  for (const w of ['alpha', 'beta', 'gamma', 'delta']) {
+    await page.request.post('/api/wordbook', { data: { word: w } })
+  }
+
+  await page.goto('/review')
+  await page.getByRole('radio', { name: '顺序' }).click()
+  await page.getByLabel('题型比例').fill('0')
+  await page.getByLabel('今天要复习多少生词').fill('1')
+  await page.getByRole('button', { name: '开始' }).click()
+
+  await page.getByText('点击或按空格翻面').click()
+  await page.getByRole('button', { name: /^不认识/ }).click()
+  await expect(page.getByText('本轮完成')).toBeVisible()
+
+  // 只出本轮判定过的那一个词，收工线沿用同一个数
+  await page.getByRole('button', { name: '再练一遍这 1 个' }).click()
+  await expect(page.getByText('第 1 张 · 生词 0 / 1')).toBeVisible()
+  await expect(page.getByRole('button', { name: '上一个' })).toBeDisabled()
+
+  await page.getByText('点击或按空格翻面').click()
+  await page.getByRole('button', { name: /^认识/ }).click()
+  await expect(page.getByText('共 1 个 · 认识 1 · 不认识 0')).toBeVisible()
 })
 
 test('随机模式打乱顺序', async ({ page }) => {
@@ -285,9 +342,9 @@ test('上一个 / 下一个在没翻面、没作答时也能用', async ({ page 
   // 第一张没有上一张，按钮在但不可点
   await expect(page.getByRole('button', { name: '上一个' })).toBeDisabled()
 
-  // 什么都没选就翻过去：两边都不算，也不写熟练度
+  // 什么都没选就翻过去：不算复习过，两边都不计，也不写熟练度
   await page.getByRole('button', { name: /下一个/ }).click()
-  await expect(page.getByText('共 1 个 · 认识 0 · 不认识 0')).toBeVisible()
+  await expect(page.getByText('共 0 个 · 认识 0 · 不认识 0')).toBeVisible()
 
   await page.getByRole('link', { name: '回单词本' }).click()
   await expect(page.getByText(/复习 0 次/).first()).toBeVisible()
@@ -307,11 +364,11 @@ test('翻回上一张时判定还在，且不会重复记一次复习', async ({
   // 第一张标「认识」，跟以前一样标记即翻页
   await page.getByText('点击或按空格翻面').click()
   await page.getByRole('button', { name: /^认识/ }).click()
-  await expect(page.getByText('2 / 2')).toBeVisible()
+  await expect(page.getByText('第 2 张')).toBeVisible()
 
   // 翻回去：判定还记着
   await page.getByRole('button', { name: '上一个' }).click()
-  await expect(page.getByText('1 / 2')).toBeVisible()
+  await expect(page.getByText('第 1 张')).toBeVisible()
   await page.getByText('点击或按空格翻面').click()
   await expect(page.getByRole('button', { name: /^认识/ })).toHaveAttribute(
     'aria-pressed',
@@ -319,9 +376,10 @@ test('翻回上一张时判定还在，且不会重复记一次复习', async ({
   )
 
   // 走完这轮：第一张只该被记一次复习，不因为翻回去看过而变成两次
+  // 第二张一个判定都没给，不进本轮名单
   await page.getByRole('button', { name: /下一个/ }).click()
   await page.getByRole('button', { name: /下一个/ }).click()
-  await expect(page.getByText('共 2 个 · 认识 1 · 不认识 0')).toBeVisible()
+  await expect(page.getByText('共 1 个 · 认识 1 · 不认识 0')).toBeVisible()
 
   await page.getByRole('link', { name: '回单词本' }).click()
   await expect(page.getByText(/熟练度 1\/5 · 复习 1 次/)).toHaveCount(1)
