@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { AiEntry, Sense } from './types'
 import { buildWordFallbackPrompt } from '@/lib/translate/prompt'
+import type { ChatMessage } from '@/lib/translate/types'
 import { getScheduler } from '@/lib/translate/instance'
 import { parseAiEntry } from './ai-parse'
 
@@ -13,11 +14,22 @@ export { isAiFallbackEligible, parseAiSenses, parseAiEntry } from './ai-parse'
  * 词条是一段 JSON，边流边解析没有意义。
  */
 export async function generateEntry(word: string): Promise<AiEntry | null> {
+  return generateEntryFrom(buildWordFallbackPrompt(word), word)
+}
+
+/**
+ * 同上，但由调用方给 prompt —— 单词本补全要在词本身之外再喂原句、
+ * 联网查到的英文释义（见 buildWordBackfillPrompt），解析与容错完全一样。
+ */
+export async function generateEntryFrom(
+  messages: ChatMessage[],
+  fallbackKey: string,
+): Promise<AiEntry | null> {
   try {
-    const result = await getScheduler().run(buildWordFallbackPrompt(word))
+    const result = await getScheduler().run(messages)
     let text = ''
     for await (const delta of result.chunks) text += delta
-    const entry = parseAiEntry(text, word)
+    const entry = parseAiEntry(text, fallbackKey)
     if (!entry || entry.senses.length === 0) return null
     return entry
   } catch (e) {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { splitRecent, interleave, RECENT_WINDOW_MS } from './ebbinghaus'
+import { splitRecent, splitPrevious, interleave, RECENT_WINDOW_MS } from './ebbinghaus'
 
 const NOW = Date.parse('2026-08-28T12:00:00Z')
 
@@ -79,5 +79,41 @@ describe('interleave', () => {
     // 前 6 张里三个巩固词全在
     expect(out.slice(0, 6).filter((w) => w.startsWith('r'))).toHaveLength(3)
     expect(out).toHaveLength(303)
+  })
+})
+
+describe('splitPrevious', () => {
+  const DAY = 24 * HOUR
+
+  it('取今天之前最近的那一天，那天背过的词整批进 due', () => {
+    const items = [
+      { id: 'yesterday-1', lastReviewedAt: at(26 * HOUR) },
+      { id: 'yesterday-2', lastReviewedAt: at(30 * HOUR) },
+      { id: 'last-week', lastReviewedAt: at(7 * DAY) },
+      { id: 'never', lastReviewedAt: null },
+    ]
+    const { due, older } = splitPrevious(items, NOW)
+    expect(due.map((i) => i.id).sort()).toEqual(['yesterday-1', 'yesterday-2'])
+    expect(older.map((i) => i.id).sort()).toEqual(['last-week', 'never'])
+  })
+
+  it('中间空了几天也认：上一批就是最近那一天，不必是昨天', () => {
+    const items = [
+      { id: 'three-days-ago', lastReviewedAt: at(3 * DAY) },
+      { id: 'ten-days-ago', lastReviewedAt: at(10 * DAY) },
+    ]
+    expect(splitPrevious(items, NOW).due.map((i) => i.id)).toEqual(['three-days-ago'])
+  })
+
+  it('全是没复习过的词时 due 为空', () => {
+    const items = [{ id: 'a', lastReviewedAt: null }]
+    const { due, older } = splitPrevious(items, NOW)
+    expect(due).toHaveLength(0)
+    expect(older).toHaveLength(1)
+  })
+
+  it('脏时间戳不进 due', () => {
+    const items = [{ id: 'bad', lastReviewedAt: '不是时间' }]
+    expect(splitPrevious(items, NOW).due).toHaveLength(0)
   })
 })

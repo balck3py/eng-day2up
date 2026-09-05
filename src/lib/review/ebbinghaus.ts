@@ -38,3 +38,41 @@ export function interleave<T>(a: T[], b: T[]): T[] {
   }
   return out
 }
+
+/** 本地自然日的日期键，如 20260905。用本地时区 —— 用户说的「昨天」是他自己的昨天。 */
+function dayKey(ms: number): number {
+  const d = new Date(ms)
+  return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate()
+}
+
+/**
+ * 从「不是刚背过」的词里挑出上一次复习的那一批：按本地自然日分组，取今天
+ * 之前最近的那一天，那天复习过的词全部进 due。
+ *
+ * 为什么不是简单的「昨天」：中间空一天没背，上一批也得补上，不能因为
+ * 日历上不是昨天就漏掉。为什么整批一起出：一轮到生词目标就收工，上一批
+ * 只是混在队列里的话，后半截根本轮不到 —— due 会被排在队首且必须过完。
+ */
+export function splitPrevious<T extends { lastReviewedAt: string | null }>(
+  items: T[],
+  now: number,
+): { due: T[]; older: T[] } {
+  const today = dayKey(now)
+  let target = 0
+  for (const item of items) {
+    const at = item.lastReviewedAt ? Date.parse(item.lastReviewedAt) : NaN
+    if (!Number.isFinite(at) || at > now) continue
+    const key = dayKey(at)
+    if (key < today && key > target) target = key
+  }
+  if (target === 0) return { due: [], older: items }
+
+  const due: T[] = []
+  const older: T[] = []
+  for (const item of items) {
+    const at = item.lastReviewedAt ? Date.parse(item.lastReviewedAt) : NaN
+    if (Number.isFinite(at) && at <= now && dayKey(at) === target) due.push(item)
+    else older.push(item)
+  }
+  return { due, older }
+}

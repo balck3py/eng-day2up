@@ -21,3 +21,16 @@ export function parseTranslation(translation: string | null): Sense[] {
         : { pos: '', meaning: line }
     })
 }
+
+/** 是否含中文字符（CJK 统一表意文字）。 */
+export function hasChinese(text: string): boolean {
+  return /[一-鿿]/.test(text)
+}
+
+/**
+ * 释义里有没有中文。词库里存在但只有英文释义（AI 兜底偶尔会这样）
+ * 对复习来说等于没有释义 —— 中译英出不了题，英译中翻过去也看不懂。
+ */
+export function hasChineseMeaning(senses: Sense[]): boolean {
+  return senses.some((s) => hasChinese(s.meaning))
+}

@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { orderCards, type ReviewMode } from '@/lib/review/order'
 import { assignQuizTypes, type ReviewCard } from '@/lib/review/quiz'
-import { splitRecent, interleave } from '@/lib/review/ebbinghaus'
+import { splitRecent, splitPrevious, interleave } from '@/lib/review/ebbinghaus'
+import { hasChineseMeaning } from '@/lib/dict/senses'
 import type { WordbookEntry } from '@/lib/wordbook/types'
 import { ReviewFlipCard } from '@/components/ReviewFlipCard'
 import { ReviewInputCard } from '@/components/ReviewInputCard'
@@ -41,6 +42,15 @@ export default function ReviewPage() {
   const markedRef = useRef<Record<number, boolean>>({})
   /** 本轮的收工线，开始时定死，中途改输入框不影响正在跑的这轮 */
   const [limit, setLimit] = useState(10)
+  /**
+   * 队首「上一批」的张数。这些是必修课：攒够生词也不收工，非过完不可 ——
+   * 昨天背过的词今天必须完整再过一遍，这是艾宾浩斯的整个意义所在。
+   */
+  const [mustDo, setMustDo] = useState(0)
+
+  // 没有中文释义的词本轮直接不排 —— 卡翻过去背面是空的，出了也没法背
+  const usable = all.filter((e) => hasChineseMeaning(e.senses))
+  const noSense = all.length - usable.length
 
   const parsedLimit = Number.parseInt(limitText, 10)
   const nextLimit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 10
@@ -54,19 +64,31 @@ export default function ReviewPage() {
   }, [])
 
   /** 开一轮新的：ordered 已经排好序，这里只管分题型、清账、进复习态 */
-  function begin(ordered: WordbookEntry[], roundLimit: number, seed: number) {
+  function begin(
+    ordered: WordbookEntry[],
+    roundLimit: number,
+    seed: number,
+    dueIds: Set<string> = new Set(),
+  ) {
     // 题型分配换一个种子，免得洗牌与分配抽同一串数
-    const cards = assignQuizTypes(ordered, cnRatio, (e) => e.senses.length > 0, seed + 1)
+    const cards = assignQuizTypes(ordered, cnRatio, (e) => hasChineseMeaning(e.senses), seed + 1)
 
     if (cards.length === 0) {
-      setNotice('这些词都没有中文释义，出不了中译英题 —— 把比例往「英译中」拖一点。')
+      setNotice(
+        noSense > 0 && usable.length === 0
+          ? '单词本里的词都还没有中文释义 —— 去单词本点「一键补全中文释义」。'
+          : '这些词都没有中文释义，出不了中译英题 —— 把比例往「英译中」拖一点。',
+      )
       setPhase('setup')
       return
     }
 
     setNotice(null)
     setQueue(cards)
-    setSkipped(ordered.length - cards.length)
+    // dueIds 的词排在 ordered 最前面，分题型只会剔除、不会重排，所以它们
+    // 在 cards 里仍是一段前缀，数出来的张数就是必修的下标区间
+    setMustDo(cards.filter((c) => dueIds.has(c.item.id)).length)
+    setSkipped(ordered.length - cards.length + noSense)
     setLimit(roundLimit)
     setCursor(0)
     verdictsRef.current = {}
@@ -78,14 +100,17 @@ export default function ReviewPage() {
   function start() {
     // 种子在点击时生成，避免服务端/客户端渲染不一致
     const seed = Date.now() % 2147483647
+    const now = Date.now()
     // 一天内背过的词单独抽出来打乱，跟其余的词交替出 —— 到了生词目标就收工，
     // 撒得太匀等于一轮下来一个巩固词都撞不上。
-    const { recent, rest } = splitRecent(all, Date.now())
-    const ordered = interleave(
-      orderCards(recent, 'random', seed + 2),
-      orderCards(rest, mode, seed),
-    )
-    begin(ordered, nextLimit, seed)
+    const { recent, rest } = splitRecent(usable, now)
+    // 上一次复习那一批（通常就是昨天的）整批排到队首，必须完整过完才轮到新词
+    const { due, older } = splitPrevious(rest, now)
+    const ordered = [
+      ...orderCards(due, mode, seed + 3),
+      ...interleave(orderCards(recent, 'random', seed + 2), orderCards(older, mode, seed)),
+    ]
+    begin(ordered, nextLimit, seed, new Set(due.map((e) => e.id)))
   }
 
   /** 二次复习：只出本轮已判定的那些词，顺序打乱、题型重抽 */
@@ -140,15 +165,16 @@ export default function ReviewPage() {
   const go = useCallback(
     (target: number) => {
       commit(cursor)
-      // 收工线只在往前走的时候判：已经攒够了还想往回翻看两眼，得让人翻得动
-      if (target > cursor && unknownCount() >= limit) {
+      // 收工线只在往前走的时候判：已经攒够了还想往回翻看两眼，得让人翻得动。
+      // target < mustDo 说明队首那批昨天的词还没过完，攒够生词也不许收工。
+      if (target > cursor && target >= mustDo && unknownCount() >= limit) {
         setPhase('done')
         return
       }
       if (target >= queue.length) setPhase('done')
       else setCursor(Math.max(0, target))
     },
-    [commit, cursor, queue.length, limit, unknownCount],
+    [commit, cursor, queue.length, limit, mustDo, unknownCount],
   )
 
   const prev = useCallback(() => go(cursor - 1), [go, cursor])
@@ -223,7 +249,8 @@ export default function ReviewPage() {
               />
               <p className="text-[0.8125rem] leading-[1.7] text-ink-3">
                 答不出来的就算生词，攒够 {nextLimit} 个这轮就收工 —— 出多少张卡不限。
-                一天内背过的词会打乱了掺进来一起出，答不出来照样算生词。
+                上一次复习过的那批词会整批排在最前面、必须全部过完才收工；
+                今天已经背过的词也会打乱了掺进来，答不出来照样算生词。
               </p>
             </div>
 
@@ -249,6 +276,16 @@ export default function ReviewPage() {
                 英译中 {100 - cnRatio}% · 中译英 {cnRatio}%
               </p>
             </div>
+
+            {noSense > 0 && (
+              <p className="text-[0.8125rem] leading-[1.7] text-ink-3">
+                {noSense} 个词还没有中文释义，本轮不出 —— 去
+                <Link href="/wordbook" className="text-ink underline">
+                  单词本
+                </Link>
+                点「一键补全中文释义」。
+              </p>
+            )}
 
             {notice && <p className="text-[0.9375rem] text-seal">{notice}</p>}
 
@@ -320,6 +357,11 @@ export default function ReviewPage() {
       <p className="font-mono text-[0.8125rem] text-ink-3">
         第 {cursor + 1} 张 · 生词 {unknownSoFar} / {limit}
       </p>
+      {cursor < mustDo && (
+        <p className="text-[0.8125rem] text-ink-3">
+          先把上一批背过的 {mustDo} 个词过完（{cursor + 1}/{mustDo}），过完才收工
+        </p>
+      )}
       {skipped > 0 && (
         <p className="text-[0.8125rem] text-ink-3">
           {skipped} 个无中文释义的词已跳过
