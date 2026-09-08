@@ -310,6 +310,11 @@ export default function ReviewPage() {
     const chosen = indices.map((i) => verdicts[i])
     const known = chosen.filter(Boolean).length
     const words = indices.map((i) => queue[i]?.item).filter((w) => w !== undefined)
+    // 只重练答不出来的那些 —— 认识的再翻一遍是浪费时间
+    const unknownWords = indices
+      .filter((i) => verdicts[i] === false)
+      .map((i) => queue[i]?.item)
+      .filter((w) => w !== undefined)
     return (
       <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-4 px-5 py-10 sm:px-6">
         <h2 className="text-lg font-semibold text-ink">本轮完成</h2>
@@ -318,17 +323,30 @@ export default function ReviewPage() {
         </p>
         {words.length > 0 && (
           <p className="text-[0.8125rem] leading-[1.7] text-ink-3">
-            趁热再过一遍：同样这 {words.length} 个词，顺序打乱、题型重抽。
+            趁热再过一遍，顺序打乱、题型重抽。
           </p>
         )}
         <div className="flex flex-wrap gap-3">
+          {unknownWords.length > 0 && (
+            <button
+              type="button"
+              onClick={() => repeatRound(unknownWords)}
+              className="rounded-[10px] bg-ink px-4 py-2 text-sm font-medium text-card"
+            >
+              只练生词 {unknownWords.length} 个
+            </button>
+          )}
           {words.length > 0 && (
             <button
               type="button"
               onClick={() => repeatRound(words)}
-              className="rounded-[10px] bg-ink px-4 py-2 text-sm font-medium text-card"
+              className={`rounded-[10px] px-4 py-2 text-sm ${
+                unknownWords.length > 0
+                  ? 'border border-rule text-ink'
+                  : 'bg-ink font-medium text-card'
+              }`}
             >
-              再练一遍这 {words.length} 个
+              全部再来 {words.length} 个
             </button>
           )}
           <button
