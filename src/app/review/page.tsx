@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { orderCards, type ReviewMode } from '@/lib/review/order'
-import { assignQuizTypes, type ReviewCard } from '@/lib/review/quiz'
+import { assignQuizTypes, type QuizRules, type ReviewCard } from '@/lib/review/quiz'
 import { splitRecent, splitPrevious, interleave } from '@/lib/review/ebbinghaus'
+import { nextFamiliarity, nextSpellOkCount, owesSpelling, SPELL_QUOTA } from '@/lib/review/mark'
 import { hasChineseMeaning } from '@/lib/dict/senses'
 import type { WordbookEntry } from '@/lib/wordbook/types'
 import { ReviewFlipCard } from '@/components/ReviewFlipCard'
@@ -16,6 +17,18 @@ const MODES: { value: ReviewMode; label: string }[] = [
   { value: 'sequential', label: '顺序' },
   { value: 'random', label: '随机' },
 ]
+
+/**
+ * 题型的两条强制规则，都读单词本上的累计状态：
+ *
+ * - 第一次背（一次都没复习过）只出英译中 —— 没见过的词让人凭空拼是白费功夫。
+ * - 熟练度未满、拼对次数还没到 SPELL_QUOTA 的词强制出中译英，直到还清。
+ */
+const QUIZ_RULES: QuizRules<WordbookEntry> = {
+  canAskCn: (e) => hasChineseMeaning(e.senses),
+  isFirstEver: (e) => e.reviewCount === 0,
+  owesSpelling: (e) => owesSpelling(e.familiarity, e.spellOkCount),
+}
 
 export default function ReviewPage() {
   const [all, setAll] = useState<WordbookEntry[]>([])
@@ -71,7 +84,7 @@ export default function ReviewPage() {
     dueIds: Set<string> = new Set(),
   ) {
     // 题型分配换一个种子，免得洗牌与分配抽同一串数
-    const cards = assignQuizTypes(ordered, cnRatio, (e) => hasChineseMeaning(e.senses), seed + 1)
+    const cards = assignQuizTypes(ordered, cnRatio, QUIZ_RULES, seed + 1)
 
     if (cards.length === 0) {
       setNotice(
@@ -116,7 +129,11 @@ export default function ReviewPage() {
   /** 二次复习：只出本轮已判定的那些词，顺序打乱、题型重抽 */
   function repeatRound(words: WordbookEntry[]) {
     const seed = Date.now() % 2147483647
-    begin(orderCards(words, 'random', seed), limit, seed)
+    // queue 里存的是开轮那一刻的快照，熟练度与拼写计数都是旧的。题型要按刚才
+    // 记下的成绩重抽 —— 新词这会儿已经不是第一次背了，正该开始还拼写欠账 ——
+    // 所以按 id 换成 all 里的最新值。
+    const fresh = words.map((w) => all.find((e) => e.id === w.id) ?? w)
+    begin(orderCards(fresh, 'random', seed), limit, seed)
   }
 
   /** 选定当前这张卡的判定。只落在本地：来回翻看不该反复写库 */
@@ -141,16 +158,29 @@ export default function ReviewPage() {
       if (!entry) return
       markedRef.current[index] = known
       // 不等待接口返回 —— 标记失败不该阻塞复习节奏
+      // 题型要一起报上去：只有中译英答对才算还了一次拼写欠账
       void fetch('/api/review/mark', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: entry.item.id, known }),
+        body: JSON.stringify({ id: entry.item.id, known, quizType: entry.type }),
       })
-      // 本地也记一笔「刚背过」：不然回设置页再开一轮时，all 里的时间戳还是旧的，
-      // 这一轮刚过完的词会被当成旧词，下一轮的巩固批次就是空的。
+      // 本地照着服务端的规则同步算一遍：不然回设置页再开一轮时，all 里还是旧值 ——
+      // 时间戳旧了，这一轮刚过完的词会被当成旧词，巩固批次就是空的；熟练度与拼写
+      // 计数旧了，题型的两条强制规则会按过时的状态判，新词又被判成第一次背。
       const now = new Date().toISOString()
       setAll((prev) =>
-        prev.map((e) => (e.id === entry.item.id ? { ...e, lastReviewedAt: now } : e)),
+        prev.map((e) =>
+          e.id === entry.item.id
+            ? {
+                ...e,
+                lastReviewedAt: now,
+                reviewCount: e.reviewCount + 1,
+                // e.familiarity 是这次之前的熟练度，正是「已掌握的词又忘了要清零」要看的值
+                spellOkCount: nextSpellOkCount(e.spellOkCount, e.familiarity, known, entry.type),
+                familiarity: nextFamiliarity(e.familiarity, known),
+              }
+            : e,
+        ),
       )
     },
     [queue],
@@ -274,6 +304,12 @@ export default function ReviewPage() {
               </div>
               <p className="font-mono text-[0.8125rem] text-ink-3">
                 英译中 {100 - cnRatio}% · 中译英 {cnRatio}%
+              </p>
+              <p className="text-[0.8125rem] leading-[1.7] text-ink-3">
+                这个比例只管「没被规则挑走」的词，所以实际出题会偏离它：
+                第一次背的词只出英译中 —— 还没见过的词凭空拼不出来；
+                熟练度没满、又还没拼对满 {SPELL_QUOTA} 次的生词则一定出中译英，
+                直到拼够为止（拼够之后照样可能被比例再抽中）。
               </p>
             </div>
 

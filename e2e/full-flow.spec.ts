@@ -42,6 +42,24 @@ async function login(page: Page) {
   await expect(mainInput(page)).toBeVisible()
 }
 
+/**
+ * 加一个词，并先替它记一次「英译中」复习。
+ *
+ * 第一次背的词只出英译中（还没见过的词凭空拼不出来），所以任何要考中译英的
+ * 用例都得先让这个词不是第一次。记成「不认识」，熟练度留在 0 —— 于是它欠着
+ * 拼写，题型比例无论怎么设都一定出中译英，用例不必再赌随机。
+ */
+async function addSpellReadyWord(page: Page, word: string) {
+  await page.request.post('/api/wordbook', { data: { word } })
+  const res = await page.request.get('/api/wordbook')
+  const { entries } = (await res.json()) as { entries: { id: string; word: string }[] }
+  const entry = entries.find((e) => e.word === word)
+  if (!entry) throw new Error(`单词 ${word} 没进单词本`)
+  await page.request.post('/api/review/mark', {
+    data: { id: entry.id, known: false, quizType: 'en2cn' },
+  })
+}
+
 /** 清空测试账号的单词本，保证用例之间互不干扰 */
 async function clearWordbook(page: Page) {
   const res = await page.request.get('/api/wordbook')
@@ -119,7 +137,7 @@ test('复习流程走完一轮并更新熟练度', async ({ page }) => {
   await expect(page.getByText('共 3 个单词')).toBeVisible()
 
   await page.getByRole('radio', { name: '顺序' }).click()
-  // 锁成纯英译中：这些测试词没有中文释义，混合比例下会被跳过
+  // 锁成纯英译中，把题型钉死 —— 混合比例下出哪种卡是随机的
   await page.getByLabel('题型比例').fill('0')
   await page.getByRole('button', { name: '开始' }).click()
 
@@ -144,7 +162,7 @@ test('攒够设定的生词数就收工，后面的词不再出', async ({ page 
 
   await page.goto('/review')
   await page.getByRole('radio', { name: '顺序' }).click()
-  // 这些测试词没有中文释义，锁成纯英译中
+  // 锁成纯英译中，把题型钉死
   await page.getByLabel('题型比例').fill('0')
   await page.getByLabel('今天要复习多少生词').fill('2')
   await page.getByRole('button', { name: '开始' }).click()
@@ -169,7 +187,7 @@ test('攒够设定的生词数就收工，后面的词不再出', async ({ page 
   await expect(page.getByText('共 3 个 · 认识 1 · 不认识 2')).toBeVisible()
 })
 
-test('本轮结束后可以把这批词打乱再练一遍', async ({ page }) => {
+test('本轮结束后可以把这批词打乱再练一遍，且第二遍变成拼写', async ({ page }) => {
   for (const w of ['alpha', 'beta', 'gamma', 'delta']) {
     await page.request.post('/api/wordbook', { data: { word: w } })
   }
@@ -180,17 +198,26 @@ test('本轮结束后可以把这批词打乱再练一遍', async ({ page }) => 
   await page.getByLabel('今天要复习多少生词').fill('1')
   await page.getByRole('button', { name: '开始' }).click()
 
+  // 第一遍是认脸 —— 第一次背的词只出英译中。队首是哪个词取决于接口的
+  // created_at 倒序，别赌，记下来第二遍要用
+  const word = (await page.getByTestId('review-word').first().textContent()) ?? ''
   await page.getByText('点击或按空格翻面').click()
   await page.getByRole('button', { name: /^不认识/ }).click()
   await expect(page.getByText('本轮完成')).toBeVisible()
 
   // 只出本轮判定过的那一个词，收工线沿用同一个数
-  await page.getByRole('button', { name: '再练一遍这 1 个' }).click()
+  await page.getByRole('button', { name: '只练生词 1 个' }).click()
   await expect(page.getByText('第 1 张 · 生词 0 / 1')).toBeVisible()
   await expect(page.getByRole('button', { name: '上一个' })).toBeDisabled()
 
-  await page.getByText('点击或按空格翻面').click()
-  await page.getByRole('button', { name: /^认识/ }).click()
+  // 刚才答不出来，这词欠着两次拼写 —— 比例还是 0，它照样得出中译英
+  const input = page.getByLabel('输入英文单词')
+  await expect(input).toBeVisible()
+  await input.fill(word)
+  await page.getByRole('button', { name: '提交' }).click()
+  await expect(page.getByText('答对')).toBeVisible()
+
+  await page.getByRole('button', { name: /下一个/ }).click()
   await expect(page.getByText('共 1 个 · 认识 1 · 不认识 0')).toBeVisible()
 })
 
@@ -202,7 +229,7 @@ test('随机模式打乱顺序', async ({ page }) => {
   async function firstCardWord(): Promise<string> {
     await page.goto('/review')
     await page.getByRole('radio', { name: '随机' }).click()
-    // 锁成纯英译中：这些测试词没有中文释义，混合比例下会被跳过
+    // 锁成纯英译中，把题型钉死
     await page.getByLabel('题型比例').fill('0')
     await page.getByRole('button', { name: '开始' }).click()
     return (await page.getByTestId('review-word').first().textContent()) ?? ''
@@ -223,8 +250,23 @@ test('题型比例滑杆实时显示百分比', async ({ page }) => {
   await expect(page.getByText('英译中 70% · 中译英 30%')).toBeVisible()
 })
 
-test('中译英答对', async ({ page }) => {
+test('第一次背的词哪怕纯中译英也只出英译中', async ({ page }) => {
+  // 词库里有它，有中文释义 —— 也就是说「出得了中译英题」，但规则不许
   await page.request.post('/api/wordbook', { data: { word: 'serendipity' } })
+
+  await page.goto('/review')
+  await page.getByLabel('题型比例').fill('100')
+  await page.getByRole('button', { name: '开始' }).click()
+
+  // 翻面卡在，输入框不在
+  await expect(page.getByText('点击或按空格翻面')).toBeVisible()
+  await expect(page.getByLabel('输入英文单词')).toHaveCount(0)
+  // 也不该被当成「没释义」给跳过
+  await expect(page.getByText(/已跳过/)).toHaveCount(0)
+})
+
+test('中译英答对', async ({ page }) => {
+  await addSpellReadyWord(page, 'serendipity')
 
   // 中译英的题面就是中文释义 —— 词库里没释义的话这个用例本身没意义，先确认
   const res = await page.request.get('/api/wordbook')
@@ -252,7 +294,7 @@ test('中译英答对', async ({ page }) => {
 })
 
 test('中译英答错时显示正确答案与用户输入', async ({ page }) => {
-  await page.request.post('/api/wordbook', { data: { word: 'serendipity' } })
+  await addSpellReadyWord(page, 'serendipity')
 
   await page.goto('/review')
   await page.getByLabel('题型比例').fill('100')
@@ -271,7 +313,7 @@ test('中译英答错时显示正确答案与用户输入', async ({ page }) => 
 })
 
 test('中译英拼不出来时直接选「不认识」看答案', async ({ page }) => {
-  await page.request.post('/api/wordbook', { data: { word: 'serendipity' } })
+  await addSpellReadyWord(page, 'serendipity')
 
   await page.goto('/review')
   await page.getByLabel('题型比例').fill('100')
@@ -287,7 +329,7 @@ test('中译英拼不出来时直接选「不认识」看答案', async ({ page 
 })
 
 test('中译英答错后可以改一下重答', async ({ page }) => {
-  await page.request.post('/api/wordbook', { data: { word: 'serendipity' } })
+  await addSpellReadyWord(page, 'serendipity')
 
   await page.goto('/review')
   await page.getByLabel('题型比例').fill('100')
@@ -312,7 +354,7 @@ test('中译英答错后可以改一下重答', async ({ page }) => {
 })
 
 test('中译英判定后可以手动改成「认识」', async ({ page }) => {
-  await page.request.post('/api/wordbook', { data: { word: 'serendipity' } })
+  await addSpellReadyWord(page, 'serendipity')
 
   await page.goto('/review')
   await page.getByLabel('题型比例').fill('100')
@@ -329,7 +371,7 @@ test('中译英判定后可以手动改成「认识」', async ({ page }) => {
 })
 
 test('上一个 / 下一个在没翻面、没作答时也能用', async ({ page }) => {
-  await page.request.post('/api/wordbook', { data: { word: 'serendipity' } })
+  await addSpellReadyWord(page, 'serendipity')
 
   await page.goto('/review')
   await page.getByLabel('题型比例').fill('100')
@@ -347,7 +389,8 @@ test('上一个 / 下一个在没翻面、没作答时也能用', async ({ page 
   await expect(page.getByText('共 0 个 · 认识 0 · 不认识 0')).toBeVisible()
 
   await page.getByRole('link', { name: '回单词本' }).click()
-  await expect(page.getByText(/复习 0 次/).first()).toBeVisible()
+  // 预先记的那一次还在，这轮什么都没选所以没再加
+  await expect(page.getByText(/复习 1 次/).first()).toBeVisible()
 })
 
 test('翻回上一张时判定还在，且不会重复记一次复习', async ({ page }) => {
@@ -357,7 +400,7 @@ test('翻回上一张时判定还在，且不会重复记一次复习', async ({
 
   await page.goto('/review')
   await page.getByRole('radio', { name: '顺序' }).click()
-  // 这些测试词没有中文释义，锁成纯英译中
+  // 锁成纯英译中，把题型钉死
   await page.getByLabel('题型比例').fill('0')
   await page.getByRole('button', { name: '开始' }).click()
 
@@ -386,7 +429,7 @@ test('翻回上一张时判定还在，且不会重复记一次复习', async ({
 })
 
 test('中译英卡片上空格进输入框，不触发翻面', async ({ page }) => {
-  await page.request.post('/api/wordbook', { data: { word: 'serendipity' } })
+  await addSpellReadyWord(page, 'serendipity')
 
   await page.goto('/review')
   await page.getByLabel('题型比例').fill('100')
@@ -403,20 +446,20 @@ test('中译英卡片上空格进输入框，不触发翻面', async ({ page }) 
 test('无中文释义的词在中译英轮次里被跳过并提示', async ({ page }) => {
   // zzqx 前缀保证词库里查不到，从而没有中文释义
   for (const w of ['zzqxfoo', 'zzqxbar', 'zzqxbaz']) {
-    await page.request.post('/api/wordbook', { data: { word: w } })
+    await addSpellReadyWord(page, w)
   }
-  await page.request.post('/api/wordbook', { data: { word: 'serendipity' } })
+  await addSpellReadyWord(page, 'serendipity')
 
   await page.goto('/review')
   await page.getByLabel('题型比例').fill('100')
   await page.getByRole('button', { name: '开始' }).click()
 
-  await expect(page.getByText('本轮 1 个 · 3 个无中文释义已跳过')).toBeVisible()
+  await expect(page.getByText('3 个无中文释义的词已跳过')).toBeVisible()
 })
 
 test('全部无中文释义 + 纯中译英时不崩溃，提示调整比例', async ({ page }) => {
   for (const w of ['zzqxfoo', 'zzqxbar']) {
-    await page.request.post('/api/wordbook', { data: { word: w } })
+    await addSpellReadyWord(page, w)
   }
 
   await page.goto('/review')

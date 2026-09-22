@@ -8,6 +8,8 @@ export interface WordbookEntry {
   note: string | null
   reviewCount: number
   familiarity: number
+  /** 中译英卡上拼对过几次。见 lib/review/mark.ts 的 SPELL_QUOTA */
+  spellOkCount: number
   lastReviewedAt: string | null
   createdAt: string
   /** 关联词库补充的分词性中文释义（词库无此词时为空数组） */
@@ -26,6 +28,7 @@ export function toEntry(row: Record<string, unknown>): WordbookEntry {
     note: (row.note as string | null) ?? null,
     reviewCount: (row.review_count as number) ?? 0,
     familiarity: (row.familiarity as number) ?? 0,
+    spellOkCount: (row.spell_ok_count as number) ?? 0,
     lastReviewedAt: (row.last_reviewed_at as string | null) ?? null,
     createdAt: row.created_at as string,
     senses: [],
