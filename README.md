@@ -9,7 +9,7 @@ Look up a word or translate a paragraph, harvest the hard words, save them, and 
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)](https://nextjs.org)
 [![React](https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white)](https://react.dev)
 [![Supabase](https://img.shields.io/badge/Supabase-Postgres%20%2B%20Auth%20%2B%20RLS-3FCF8E?logo=supabase&logoColor=white)](https://supabase.com)
-[![Tests](https://img.shields.io/badge/tests-276%20unit%20%2B%206%20e2e-brightgreen)](#-testing)
+[![Tests](https://img.shields.io/badge/tests-351%20unit%20%2B%206%20e2e-brightgreen)](#-testing)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 English · [简体中文](README.zh-CN.md)
@@ -112,14 +112,21 @@ npm run dev                          # http://localhost:3000
 
 ### Using your own local model (no code, no redeploy)
 
-Open **Settings** in the app, fill in a Base URL (e.g. `http://localhost:11434/v1`), a model name, and optionally a custom prompt. It's stored in `localStorage` and only speaks the OpenAI protocol. Once set, translation / lookup-fallback / explanation all run through it.
+Open **Settings** in the app, fill in a Base URL, a model name, and optionally a custom prompt. It's stored in `localStorage` and only speaks the OpenAI protocol. Once set, translation / lookup-fallback / explanation all run through it.
 
-> On the HTTPS site, browsers block direct calls to `http://localhost` (mixed content). Expose your model over HTTPS via a tunnel (`cloudflared tunnel --url http://localhost:11434`) or allow the site's origin (`OLLAMA_ORIGINS=https://your.site ollama serve`). No such limit in local `http` dev.
+| Endpoint | Base URL | Model name |
+|---|---|---|
+| ollama | `http://localhost:11434/v1` | `qwen2.5:7b` |
+| LM Studio | `http://localhost:1234/v1` | the id LM Studio reports, e.g. `qwen2.5-7b-instruct` |
+
+The model name must match the endpoint's id exactly — get it from `curl -s http://localhost:1234/v1/models`. Embedding models can't translate; load a chat/instruct model.
+
+> On the HTTPS site, browsers block direct calls to `http://localhost` (mixed content). Expose your model over HTTPS via a tunnel (`cloudflared tunnel --url http://localhost:1234`) or allow the site's origin (ollama: `OLLAMA_ORIGINS=https://your.site ollama serve`; LM Studio: Developer → Server Settings → Enable CORS, or `lms server start --cors`). Local `http` dev escapes mixed content, but a different port is still cross-origin — CORS still has to be on.
 
 ## 🧪 Testing
 
 ```bash
-npm test           # 276 unit tests (Vitest)
+npm test           # 351 unit tests (Vitest)
 npm run test:e2e   # 6 end-to-end tests (Playwright) — needs a translation backend
                    # and E2E_EMAIL / E2E_PASSWORD in .env.local
 npm run build      # authoritative typecheck + production build

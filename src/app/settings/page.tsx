@@ -111,7 +111,9 @@ export default function SettingsPage() {
             className="rounded-[10px] border border-rule bg-card px-3 py-2 font-mono text-[0.9375rem] text-ink placeholder:text-ink-3 focus:border-focus"
           />
           <span className="text-[0.8125rem] text-ink-3">
-            OpenAI 兼容端点，会在其后拼 /chat/completions
+            OpenAI 兼容端点，会在其后拼 /chat/completions。
+            ollama 是 <span className="font-mono">:11434/v1</span>，
+            LM Studio 是 <span className="font-mono">:1234/v1</span>
           </span>
         </label>
 
@@ -125,6 +127,11 @@ export default function SettingsPage() {
             placeholder="qwen2.5:7b"
             className="rounded-[10px] border border-rule bg-card px-3 py-2 font-mono text-[0.9375rem] text-ink placeholder:text-ink-3 focus:border-focus"
           />
+          <span className="text-[0.8125rem] text-ink-3">
+            要跟端点上的 id 一字不差。拿准确的名字：
+            <span className="font-mono">curl -s 端点/models</span>
+            。注意 embedding 模型不能用来翻译，得加载一个 chat / instruct 模型
+          </span>
         </label>
 
         <label className="flex flex-col gap-1.5">
@@ -190,12 +197,20 @@ ngrok http 11434
 # 然后 Base URL 填隧道给出的 https 地址 + /v1`}
           </pre>
           <p>
-            2. 或让本地模型允许本站来源的跨域。以 ollama 为例：
+            2. 或让本地模型允许本站来源的跨域：
           </p>
           <pre className="overflow-x-auto rounded-[8px] bg-paper px-3 py-2 font-mono text-[0.75rem] text-ink">
-{`OLLAMA_ORIGINS=https://eng.eugen.uno ollama serve`}
+{`# ollama
+OLLAMA_ORIGINS=https://eng.eugen.uno ollama serve
+
+# LM Studio：Developer → Server Settings 勾上 Enable CORS
+# 或用命令行
+lms server start --cors`}
           </pre>
-          <p>在本机 http 开发环境（localhost）下不受这些限制，直接填即可。</p>
+          <p>
+            本机 http 开发环境（localhost）不受混合内容限制，但端口不同仍算跨域 ——
+            LM Studio 的 CORS 开关照样要打开。
+          </p>
         </div>
       </details>
     </main>

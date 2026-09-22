@@ -9,7 +9,7 @@
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?logo=next.js)](https://nextjs.org)
 [![React](https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white)](https://react.dev)
 [![Supabase](https://img.shields.io/badge/Supabase-Postgres%20%2B%20Auth%20%2B%20RLS-3FCF8E?logo=supabase&logoColor=white)](https://supabase.com)
-[![Tests](https://img.shields.io/badge/tests-276%20单元%20%2B%206%20e2e-brightgreen)](#-测试)
+[![Tests](https://img.shields.io/badge/tests-351%20单元%20%2B%206%20e2e-brightgreen)](#-测试)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [English](README.md) · 简体中文
@@ -112,14 +112,21 @@ npm run dev                          # http://localhost:3000
 
 ### 使用你自己的本地模型（无需改代码、无需重新部署）
 
-打开应用里的**设置**页，填 Base URL（如 `http://localhost:11434/v1`）、模型名，可选自定义提示词。配置存 `localStorage`，只兼容 OpenAI 协议。配好后，翻译 / 查词兜底 / 释义都会走它。
+打开应用里的**设置**页，填 Base URL、模型名，可选自定义提示词。配置存 `localStorage`，只兼容 OpenAI 协议。配好后，翻译 / 查词兜底 / 释义都会走它。
 
-> 线上是 HTTPS 页面，浏览器会拦截它直连 `http://localhost`（混合内容）。用隧道把模型暴露成 HTTPS（`cloudflared tunnel --url http://localhost:11434`），或让端点放行本站来源（`OLLAMA_ORIGINS=https://你的域名 ollama serve`）。本机 `http` 开发环境无此限制。
+| 端点 | Base URL | 模型名 |
+|---|---|---|
+| ollama | `http://localhost:11434/v1` | `qwen2.5:7b` |
+| LM Studio | `http://localhost:1234/v1` | LM Studio 里那个 id，如 `qwen2.5-7b-instruct` |
+
+模型名要跟端点上的 id 一字不差，用 `curl -s http://localhost:1234/v1/models` 拿准；embedding 模型不能拿来翻译，得加载 chat / instruct 模型。
+
+> 线上是 HTTPS 页面，浏览器会拦截它直连 `http://localhost`（混合内容）。用隧道把模型暴露成 HTTPS（`cloudflared tunnel --url http://localhost:1234`），或让端点放行本站来源（ollama：`OLLAMA_ORIGINS=https://你的域名 ollama serve`；LM Studio：Developer → Server Settings 勾 Enable CORS，或 `lms server start --cors`）。本机 `http` 开发环境不受混合内容限制，但端口不同仍算跨域，CORS 照样要开。
 
 ## 🧪 测试
 
 ```bash
-npm test           # 276 个单元测试（Vitest）
+npm test           # 351 个单元测试（Vitest）
 npm run test:e2e   # 6 个端到端测试（Playwright）—— 需翻译后端可用，
                    # 并在 .env.local 配置 E2E_EMAIL / E2E_PASSWORD
 npm run build      # 权威类型检查 + 生产构建
