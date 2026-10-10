@@ -2,12 +2,27 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { isSingleWord } from '@/lib/text/normalize'
+import { sentenceAt } from '@/lib/text/sentence'
 import { WordCard } from './WordCard'
 import { lookupWordClient } from '@/lib/dict/clientLookup'
 import type { WordDetail } from '@/lib/dict/types'
 
 const POPOVER_WIDTH = 320
 const MARGIN = 12
+
+/** 选区所在文本块（原文或译文的那个元素）里包含选区的句子，取不到返回 null。 */
+function sentenceOfRange(range: Range, word: string): string | null {
+  const node = range.startContainer
+  const block = node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as Element)
+  if (!block) return null
+  const pre = document.createRange()
+  pre.selectNodeContents(block)
+  pre.setEnd(range.startContainer, range.startOffset)
+  // 双击选词常带上尾随空格，选区起点按去掉前导空白后的位置算
+  const raw = range.toString()
+  const start = pre.toString().length + (raw.length - raw.trimStart().length)
+  return sentenceAt(block.textContent ?? '', start, start + word.length)
+}
 
 /**
  * 包裹任意内容，在其中选中单个英文单词时弹出词卡。
@@ -20,7 +35,7 @@ export function SelectionPopover({
   sourceContext = null,
 }: {
   children: React.ReactNode
-  /** 浮层里收藏词时随词存下的原句 */
+  /** 浮层里收藏词时随词存下的原句；能从选区定位到所在句子时以句子为准 */
   sourceContext?: string | null
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
@@ -29,6 +44,7 @@ export function SelectionPopover({
   const wordRef = useRef('')
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
   const [word, setWord] = useState('')
+  const [context, setContext] = useState<string | null>(null)
   const [detail, setDetail] = useState<WordDetail | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -66,6 +82,7 @@ export function SelectionPopover({
       setPos({ x, y: rect.bottom + 8 })
       wordRef.current = text
       setWord(text)
+      setContext(sentenceOfRange(range, text))
       setDetail(null)
       setBusy(true)
 
@@ -125,7 +142,7 @@ export function SelectionPopover({
         >
           {busy && <p className="p-4 text-[0.9375rem] text-ink-3">查询中…</p>}
           {!busy && detail && (
-            <WordCard detail={detail} variant="embedded" sourceContext={sourceContext} />
+            <WordCard detail={detail} variant="embedded" sourceContext={context ?? sourceContext} />
           )}
           {!busy && !detail && (
             <p className="p-4 text-[0.9375rem] text-ink-2">

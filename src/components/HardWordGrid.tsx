@@ -6,6 +6,7 @@ import type { Sense } from '@/lib/dict/types'
 import { FavoriteButton } from './FavoriteButton'
 import { getLocalModelConfig, explainLocal } from '@/lib/translate/localModel'
 import { lookupWordClient } from '@/lib/dict/clientLookup'
+import { sentenceOf } from '@/lib/text/sentence'
 
 function Card({ hw, context }: { hw: HardWord; context: string }) {
   const [open, setOpen] = useState(false)
@@ -111,7 +112,10 @@ function Card({ hw, context }: { hw: HardWord; context: string }) {
           )}
         </button>
         <div className="p-3.5 pl-2">
-          <FavoriteButton word={hw.word} sourceContext={context} />
+          <FavoriteButton
+            word={hw.word}
+            sourceContext={sentenceOf(context, hw.surface) ?? context}
+          />
         </div>
       </div>
 
