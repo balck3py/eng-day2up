@@ -38,6 +38,44 @@ export function mergeHistory(
   return [item, ...deduped].slice(0, max)
 }
 
+type Listener = () => void
+
+const listeners = new Set<Listener>()
+/** 缓存的快照。useSyncExternalStore 要求同一状态下返回同一引用，
+    而 getHistory() 每次都新建数组，直接喂给它会无限重渲染。 */
+let cached: HistoryItem[] | null = null
+
+/** 历史被改动后调用：作废缓存并通知订阅者。 */
+function emit(): void {
+  cached = null
+  for (const l of listeners) l()
+}
+
+/** 服务端快照恒为空数组，且必须是同一个引用。 */
+const SERVER_SNAPSHOT: HistoryItem[] = []
+
+export function subscribeHistory(listener: Listener): () => void {
+  listeners.add(listener)
+  // 同一浏览器的其他标签页改了历史，这边也要跟着刷新
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === STORAGE_KEY) emit()
+  }
+  window.addEventListener('storage', onStorage)
+  return () => {
+    listeners.delete(listener)
+    window.removeEventListener('storage', onStorage)
+  }
+}
+
+export function getHistorySnapshot(): HistoryItem[] {
+  if (cached === null) cached = getHistory()
+  return cached
+}
+
+export function getHistoryServerSnapshot(): HistoryItem[] {
+  return SERVER_SNAPSHOT
+}
+
 export function getHistory(): HistoryItem[] {
   if (typeof window === 'undefined') return []
   try {
@@ -82,6 +120,7 @@ export function addHistory(source: string, translation: string): HistoryItem[] {
   } catch {
     // 配额满/隐私模式等写入失败：历史是锦上添花，静默即可
   }
+  emit()
   return next
 }
 
@@ -93,6 +132,7 @@ export function removeHistory(id: string): HistoryItem[] {
   } catch {
     // 同上
   }
+  emit()
   return next
 }
 
@@ -103,4 +143,5 @@ export function clearHistory(): void {
   } catch {
     // 同上
   }
+  emit()
 }

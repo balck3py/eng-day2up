@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseTranslation } from './senses'
+import { parseTranslation, hasChineseMeaning } from './senses'
 
 describe('parseTranslation', () => {
   it('按真实换行拆分并提取词性', () => {
@@ -53,5 +53,19 @@ describe('parseTranslation', () => {
     expect(parseTranslation('苹果. 一种水果')).toEqual([
       { pos: '', meaning: '苹果. 一种水果' },
     ])
+  })
+})
+
+describe('hasChineseMeaning', () => {
+  it('有中文释义为真', () => {
+    expect(hasChineseMeaning([{ pos: 'n.', meaning: '压力' }])).toBe(true)
+  })
+
+  it('只有英文释义等于没有释义', () => {
+    expect(hasChineseMeaning([{ pos: 'n.', meaning: 'the force per unit area' }])).toBe(false)
+  })
+
+  it('空列表为假', () => {
+    expect(hasChineseMeaning([])).toBe(false)
   })
 })

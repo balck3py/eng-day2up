@@ -1,10 +1,10 @@
 'use client'
 
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useState } from 'react'
 import Link from 'next/link'
 import type { WordbookEntry } from '@/lib/wordbook/types'
 import { AudioButton } from '@/components/AudioButton'
-import { lookupWordClient } from '@/lib/dict/clientLookup'
+import { hasChineseMeaning } from '@/lib/dict/senses'
 
 export default function WordbookPage() {
   const searchId = useId()
@@ -36,52 +36,60 @@ export default function WordbookPage() {
     return () => clearTimeout(t)
   }, [query, load])
 
-  // 没有中文释义的词：每次打开单词本都尝试查词/AI 兜底补全，并写回词库（补全存储），
-  // 下次打开即命中、无需再查。attempted 防止同一次挂载内对同一个词重复发起。
-  const attempted = useRef<Set<string>>(new Set())
-  const [resolving, setResolving] = useState<Set<string>>(new Set())
-  const toggleResolving = (key: string, on: boolean) =>
-    setResolving((prev) => {
-      const next = new Set(prev)
-      if (on) next.add(key)
-      else next.delete(key)
-      return next
-    })
+  // 没有中文释义的词：点按钮批量补全（词库 → AI+原句 → 联网英文释义再翻译）。
+  // 不再在打开页面时自动逐词发请求 —— 那条路每开一次单词本就打一批 AI 调用，
+  // 补不上的词还每次都重来一遍。
+  const missing = entries.filter((e) => !hasChineseMeaning(e.senses))
+  const [filling, setFilling] = useState(false)
+  const [fillNote, setFillNote] = useState<string | null>(null)
 
-  useEffect(() => {
-    const pending = entries.filter(
-      (e) => e.senses.length === 0 && !attempted.current.has(e.wordKey),
-    )
-    if (pending.length === 0) return
-    let alive = true
-    for (const e of pending) {
-      attempted.current.add(e.wordKey)
-      toggleResolving(e.wordKey, true)
-      void (async () => {
-        try {
-          const d = await lookupWordClient(e.word)
-          if (!alive || !d || d.senses.length === 0) return
-          const phonetic = d.phonetic ?? d.phoneticUs ?? d.phoneticUk ?? null
-          setEntries((list) =>
-            list.map((x) =>
-              x.id === e.id ? { ...x, senses: d.senses, phonetic: phonetic ?? x.phonetic } : x,
-            ),
-          )
-          // 补全存储：把释义写回词库（按该词 word_key），下次打开直接命中
-          void fetch('/api/ai-entry', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ word: e.word, senses: d.senses, phonetic }),
-          }).catch(() => {})
-        } finally {
-          if (alive) toggleResolving(e.wordKey, false)
+  async function backfill() {
+    setFilling(true)
+    setFillNote(null)
+    const skip: string[] = []
+    let filled = 0
+    try {
+      // 服务端一次只补一小批（每个词最多两轮 LLM，一口气补完必超时），
+      // 这里反复调直到没有待补的词。补不动的进 skip，下一轮不再重试。
+      for (let round = 0; round < 200; round++) {
+        const res = await fetch('/api/backfill', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ skip }),
+        })
+        if (!res.ok) {
+          setFillNote('补全请求失败，请稍后再试。')
+          break
         }
-      })()
+        const data = (await res.json()) as {
+          filled: { word: string }[]
+          failed: string[]
+          remaining: number
+          quotaExhausted?: boolean
+        }
+        if (data.quotaExhausted) {
+          setFillNote(`今日 AI 配额已用完，已补全 ${filled} 个，明天再来。`)
+          break
+        }
+        filled += data.filled.length
+        skip.push(...data.failed)
+        setFillNote(`补全中… 已补 ${filled} 个，还剩 ${data.remaining} 个`)
+        if (data.remaining === 0) {
+          setFillNote(
+            skip.length > 0
+              ? `补全完成：${filled} 个已补上，${skip.length} 个实在补不出（${skip.join('、')}），建议直接移除。`
+              : `补全完成：${filled} 个已补上。`,
+          )
+          break
+        }
+      }
+    } catch {
+      setFillNote('网络错误，请重试。')
+    } finally {
+      setFilling(false)
+      await load(query)
     }
-    return () => {
-      alive = false
-    }
-  }, [entries])
+  }
 
   async function remove(id: string) {
     const res = await fetch(`/api/wordbook/${id}`, { method: 'DELETE' })
@@ -108,6 +116,22 @@ export default function WordbookPage() {
           开始复习
         </Link>
       </div>
+
+      {(missing.length > 0 || fillNote) && (
+        <div className="flex flex-wrap items-center gap-3 rounded-[10px] border border-rule bg-card px-4 py-3">
+          <button
+            type="button"
+            onClick={() => void backfill()}
+            disabled={filling || missing.length === 0}
+            className="shrink-0 rounded-[10px] bg-ink px-4 py-2 text-sm font-medium text-card disabled:opacity-40"
+          >
+            {filling ? '补全中…' : `一键补全中文释义（${missing.length}）`}
+          </button>
+          <p className="text-[0.8125rem] leading-[1.7] text-ink-3">
+            {fillNote ?? '词库 → AI（带原句）→ 联网查英文释义再翻译，逐级兜底。'}
+          </p>
+        </div>
+      )}
 
       {loading && <p className="text-[0.9375rem] text-ink-3">加载中…</p>}
       {error && <p className="text-[0.9375rem] text-seal">{error}</p>}
@@ -146,10 +170,10 @@ export default function WordbookPage() {
                       </li>
                     ))}
                   </ul>
-                ) : resolving.has(e.wordKey) ? (
-                  <p className="mt-1 text-[0.8125rem] text-ink-3">释义补全中…</p>
                 ) : (
-                  <p className="mt-1 text-[0.8125rem] text-ink-3">词库与 AI 均暂无释义</p>
+                  <p className="mt-1 text-[0.8125rem] text-ink-3">
+                    暂无中文释义 —— 点上面的「一键补全」
+                  </p>
                 )}
                 {e.sourceContext && (
                   <p className="mt-1.5 line-clamp-2 text-[0.875rem] leading-[1.6] text-ink-3">

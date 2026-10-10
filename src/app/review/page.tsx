@@ -1,10 +1,15 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { orderCards, type ReviewMode } from '@/lib/review/order'
+import { assignQuizTypes, type QuizRules, type ReviewCard } from '@/lib/review/quiz'
+import { splitRecent, splitPrevious, interleave } from '@/lib/review/ebbinghaus'
+import { nextFamiliarity, nextSpellOkCount, owesSpelling, SPELL_QUOTA } from '@/lib/review/mark'
+import { hasChineseMeaning } from '@/lib/dict/senses'
 import type { WordbookEntry } from '@/lib/wordbook/types'
-import { AudioButton } from '@/components/AudioButton'
+import { ReviewFlipCard } from '@/components/ReviewFlipCard'
+import { ReviewInputCard } from '@/components/ReviewInputCard'
 
 type Phase = 'setup' | 'reviewing' | 'done'
 
@@ -13,15 +18,55 @@ const MODES: { value: ReviewMode; label: string }[] = [
   { value: 'random', label: '随机' },
 ]
 
+/**
+ * 题型的两条强制规则，都读单词本上的累计状态：
+ *
+ * - 第一次背（一次都没复习过）只出英译中 —— 没见过的词让人凭空拼是白费功夫。
+ * - 熟练度未满、拼对次数还没到 SPELL_QUOTA 的词强制出中译英，直到还清。
+ */
+const QUIZ_RULES: QuizRules<WordbookEntry> = {
+  canAskCn: (e) => hasChineseMeaning(e.senses),
+  isFirstEver: (e) => e.reviewCount === 0,
+  owesSpelling: (e) => owesSpelling(e.familiarity, e.spellOkCount),
+}
+
 export default function ReviewPage() {
   const [all, setAll] = useState<WordbookEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [phase, setPhase] = useState<Phase>('setup')
   const [mode, setMode] = useState<ReviewMode>('sequential')
-  const [queue, setQueue] = useState<WordbookEntry[]>([])
+  /** 中译英题目占比，0 = 全英译中，100 = 全中译英 */
+  const [cnRatio, setCnRatio] = useState(50)
+  /** 本轮要攒够多少生词。受控输入，空着 / 填 0 都回落到默认的 10 */
+  const [limitText, setLimitText] = useState('10')
+  const [queue, setQueue] = useState<ReviewCard<WordbookEntry>[]>([])
+  const [skipped, setSkipped] = useState(0)
+  const [notice, setNotice] = useState<string | null>(null)
   const [cursor, setCursor] = useState(0)
-  const [revealed, setRevealed] = useState(false)
-  const [stats, setStats] = useState({ known: 0, unknown: 0 })
+  /**
+   * 每张卡当前记下的「认识 / 不认识」，键是卡在 queue 里的下标。
+   * 有了上一个 / 下一个导航，同一张卡会被翻到不止一次，判定必须能改写、
+   * 能回看，所以按下标存，而不是加加减减地累计计数。
+   */
+  const [verdicts, setVerdicts] = useState<Record<number, boolean>>({})
+  // 判定要在事件里被同步读到（选完立刻翻页那条路），state 赶不上，另存一份
+  const verdictsRef = useRef<Record<number, boolean>>({})
+  /** 已经写进熟练度的那些卡，值是写进去的判定，用来避免重复写库 */
+  const markedRef = useRef<Record<number, boolean>>({})
+  /** 本轮的收工线，开始时定死，中途改输入框不影响正在跑的这轮 */
+  const [limit, setLimit] = useState(10)
+  /**
+   * 队首「上一批」的张数。这些是必修课：攒够生词也不收工，非过完不可 ——
+   * 昨天背过的词今天必须完整再过一遍，这是艾宾浩斯的整个意义所在。
+   */
+  const [mustDo, setMustDo] = useState(0)
+
+  // 没有中文释义的词本轮直接不排 —— 卡翻过去背面是空的，出了也没法背
+  const usable = all.filter((e) => hasChineseMeaning(e.senses))
+  const noSense = all.length - usable.length
+
+  const parsedLimit = Number.parseInt(limitText, 10)
+  const nextLimit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 10
 
   useEffect(() => {
     void fetch('/api/wordbook')
@@ -31,54 +76,149 @@ export default function ReviewPage() {
       .finally(() => setLoading(false))
   }, [])
 
-  function start() {
-    // 种子在点击时生成，避免服务端/客户端渲染不一致
-    setQueue(orderCards(all, mode, Date.now() % 2147483647))
+  /** 开一轮新的：ordered 已经排好序，这里只管分题型、清账、进复习态 */
+  function begin(
+    ordered: WordbookEntry[],
+    roundLimit: number,
+    seed: number,
+    dueIds: Set<string> = new Set(),
+  ) {
+    // 题型分配换一个种子，免得洗牌与分配抽同一串数
+    const cards = assignQuizTypes(ordered, cnRatio, QUIZ_RULES, seed + 1)
+
+    if (cards.length === 0) {
+      setNotice(
+        noSense > 0 && usable.length === 0
+          ? '单词本里的词都还没有中文释义 —— 去单词本点「一键补全中文释义」。'
+          : '这些词都没有中文释义，出不了中译英题 —— 把比例往「英译中」拖一点。',
+      )
+      setPhase('setup')
+      return
+    }
+
+    setNotice(null)
+    setQueue(cards)
+    // dueIds 的词排在 ordered 最前面，分题型只会剔除、不会重排，所以它们
+    // 在 cards 里仍是一段前缀，数出来的张数就是必修的下标区间
+    setMustDo(cards.filter((c) => dueIds.has(c.item.id)).length)
+    setSkipped(ordered.length - cards.length + noSense)
+    setLimit(roundLimit)
     setCursor(0)
-    setRevealed(false)
-    setStats({ known: 0, unknown: 0 })
+    verdictsRef.current = {}
+    markedRef.current = {}
+    setVerdicts({})
     setPhase('reviewing')
   }
 
-  const mark = useCallback(
+  function start() {
+    // 种子在点击时生成，避免服务端/客户端渲染不一致
+    const seed = Date.now() % 2147483647
+    const now = Date.now()
+    // 一天内背过的词单独抽出来打乱，跟其余的词交替出 —— 到了生词目标就收工，
+    // 撒得太匀等于一轮下来一个巩固词都撞不上。
+    const { recent, rest } = splitRecent(usable, now)
+    // 上一次复习那一批（通常就是昨天的）整批排到队首，必须完整过完才轮到新词
+    const { due, older } = splitPrevious(rest, now)
+    const ordered = [
+      ...orderCards(due, mode, seed + 3),
+      ...interleave(orderCards(recent, 'random', seed + 2), orderCards(older, mode, seed)),
+    ]
+    begin(ordered, nextLimit, seed, new Set(due.map((e) => e.id)))
+  }
+
+  /** 二次复习：只出本轮已判定的那些词，顺序打乱、题型重抽 */
+  function repeatRound(words: WordbookEntry[]) {
+    const seed = Date.now() % 2147483647
+    // queue 里存的是开轮那一刻的快照，熟练度与拼写计数都是旧的。题型要按刚才
+    // 记下的成绩重抽 —— 新词这会儿已经不是第一次背了，正该开始还拼写欠账 ——
+    // 所以按 id 换成 all 里的最新值。
+    const fresh = words.map((w) => all.find((e) => e.id === w.id) ?? w)
+    begin(orderCards(fresh, 'random', seed), limit, seed)
+  }
+
+  /** 选定当前这张卡的判定。只落在本地：来回翻看不该反复写库 */
+  const setVerdict = useCallback(
     (known: boolean) => {
-      const card = queue[cursor]
-      if (!card) return
-      setStats((s) => ({
-        known: s.known + (known ? 1 : 0),
-        unknown: s.unknown + (known ? 0 : 1),
-      }))
-      // 不等待接口返回就翻下一张 —— 标记失败不该阻塞复习节奏
+      verdictsRef.current = { ...verdictsRef.current, [cursor]: known }
+      setVerdicts(verdictsRef.current)
+    },
+    [cursor],
+  )
+
+  /**
+   * 离开某张卡时才把判定写进熟练度，同一个值只写一次 —— 接口每调一次
+   * review_count 就加一，翻回去看两眼不该算成复习了两遍。
+   */
+  const commit = useCallback(
+    (index: number) => {
+      const known = verdictsRef.current[index]
+      if (known === undefined) return
+      if (markedRef.current[index] === known) return
+      const entry = queue[index]
+      if (!entry) return
+      markedRef.current[index] = known
+      // 不等待接口返回 —— 标记失败不该阻塞复习节奏
+      // 题型要一起报上去：只有中译英答对才算还了一次拼写欠账
       void fetch('/api/review/mark', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: card.id, known }),
+        body: JSON.stringify({ id: entry.item.id, known, quizType: entry.type }),
       })
-      if (cursor + 1 >= queue.length) setPhase('done')
-      else {
-        setCursor(cursor + 1)
-        setRevealed(false)
-      }
+      // 本地照着服务端的规则同步算一遍：不然回设置页再开一轮时，all 里还是旧值 ——
+      // 时间戳旧了，这一轮刚过完的词会被当成旧词，巩固批次就是空的；熟练度与拼写
+      // 计数旧了，题型的两条强制规则会按过时的状态判，新词又被判成第一次背。
+      const now = new Date().toISOString()
+      setAll((prev) =>
+        prev.map((e) =>
+          e.id === entry.item.id
+            ? {
+                ...e,
+                lastReviewedAt: now,
+                reviewCount: e.reviewCount + 1,
+                // e.familiarity 是这次之前的熟练度，正是「已掌握的词又忘了要清零」要看的值
+                spellOkCount: nextSpellOkCount(e.spellOkCount, e.familiarity, known, entry.type),
+                familiarity: nextFamiliarity(e.familiarity, known),
+              }
+            : e,
+        ),
+      )
     },
-    [queue, cursor],
+    [queue],
   )
 
-  // 键盘操作：空格翻面，翻面后 1 / 2 标记
-  useEffect(() => {
-    if (phase !== 'reviewing') return
-    function onKey(e: KeyboardEvent) {
-      if (e.key === ' ') {
-        e.preventDefault()
-        setRevealed((r) => !r)
+  /** 本轮攒到的生词数 —— 答不出来的就算生词，不管它是新词还是昨天背过的 */
+  const unknownCount = useCallback(
+    () => Object.values(verdictsRef.current).filter((v) => v === false).length,
+    [],
+  )
+
+  const go = useCallback(
+    (target: number) => {
+      commit(cursor)
+      // 收工线只在往前走的时候判：已经攒够了还想往回翻看两眼，得让人翻得动。
+      // target < mustDo 说明队首那批昨天的词还没过完，攒够生词也不许收工。
+      if (target > cursor && target >= mustDo && unknownCount() >= limit) {
+        setPhase('done')
         return
       }
-      if (!revealed) return
-      if (e.key === '1') mark(false)
-      if (e.key === '2') mark(true)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [phase, revealed, mark])
+      if (target >= queue.length) setPhase('done')
+      else setCursor(Math.max(0, target))
+    },
+    [commit, cursor, queue.length, limit, mustDo, unknownCount],
+  )
+
+  const prev = useCallback(() => go(cursor - 1), [go, cursor])
+  const next = useCallback(() => go(cursor + 1), [go, cursor])
+
+  /** 英译中的认识 / 不认识：标记并翻页，跟加导航之前一样 */
+  const markAndNext = useCallback(
+    (known: boolean) => {
+      setVerdict(known)
+      // setVerdict 已经同步写进 ref，go 里的 commit 拿得到这个新值
+      go(cursor + 1)
+    },
+    [setVerdict, go, cursor],
+  )
 
   if (loading) {
     return (
@@ -123,6 +263,68 @@ export default function ReviewPage() {
                 </button>
               ))}
             </div>
+
+            <div className="flex flex-col gap-2">
+              <label htmlFor="new-limit" className="text-sm text-ink-2">
+                今天要复习多少生词
+              </label>
+              <input
+                id="new-limit"
+                type="number"
+                min={1}
+                inputMode="numeric"
+                value={limitText}
+                onChange={(e) => setLimitText(e.target.value)}
+                className="w-28 rounded-[10px] border border-rule bg-paper px-4 py-2 text-[1rem] text-ink focus:border-focus focus:outline-none"
+              />
+              <p className="text-[0.8125rem] leading-[1.7] text-ink-3">
+                答不出来的就算生词，攒够 {nextLimit} 个这轮就收工 —— 出多少张卡不限。
+                上一次复习过的那批词会整批排在最前面、必须全部过完才收工；
+                今天已经背过的词也会打乱了掺进来，答不出来照样算生词。
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <label htmlFor="cn-ratio" className="text-sm text-ink-2">
+                题型比例
+              </label>
+              <div className="flex items-center gap-3">
+                <span className="text-[0.8125rem] text-ink-3">英译中</span>
+                <input
+                  id="cn-ratio"
+                  type="range"
+                  min={0}
+                  max={100}
+                  step={10}
+                  value={cnRatio}
+                  onChange={(e) => setCnRatio(Number(e.target.value))}
+                  className="w-56 accent-ink"
+                />
+                <span className="text-[0.8125rem] text-ink-3">中译英</span>
+              </div>
+              <p className="font-mono text-[0.8125rem] text-ink-3">
+                英译中 {100 - cnRatio}% · 中译英 {cnRatio}%
+              </p>
+              <p className="text-[0.8125rem] leading-[1.7] text-ink-3">
+                这个比例只管「没被规则挑走」的词，所以实际出题会偏离它：
+                第一次背的词只出英译中 —— 还没见过的词凭空拼不出来；
+                熟练度没满、又还没拼对满 {SPELL_QUOTA} 次的生词则一定出中译英，
+                直到拼够为止（拼够之后照样可能被比例再抽中）。
+              </p>
+            </div>
+
+            {noSense > 0 && (
+              <p className="text-[0.8125rem] leading-[1.7] text-ink-3">
+                {noSense} 个词还没有中文释义，本轮不出 —— 去
+                <Link href="/wordbook" className="text-ink underline">
+                  单词本
+                </Link>
+                点「一键补全中文释义」。
+              </p>
+            )}
+
+            {notice && <p className="text-[0.9375rem] text-seal">{notice}</p>}
+
             <button
               type="button"
               onClick={start}
@@ -137,17 +339,56 @@ export default function ReviewPage() {
   }
 
   if (phase === 'done') {
+    // 从 verdicts 现算，别累计 —— 中途改判、翻回去重选都要如实反映在这里。
+    // 本轮的词 = 真给过判定的那些卡；只按「下一个」跳过去的不算复习过，
+    // 也就不进二次复习的名单。
+    const indices = Object.keys(verdicts).map(Number)
+    const chosen = indices.map((i) => verdicts[i])
+    const known = chosen.filter(Boolean).length
+    const words = indices.map((i) => queue[i]?.item).filter((w) => w !== undefined)
+    // 只重练答不出来的那些 —— 认识的再翻一遍是浪费时间
+    const unknownWords = indices
+      .filter((i) => verdicts[i] === false)
+      .map((i) => queue[i]?.item)
+      .filter((w) => w !== undefined)
     return (
       <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-4 px-5 py-10 sm:px-6">
         <h2 className="text-lg font-semibold text-ink">本轮完成</h2>
         <p className="text-[0.9375rem] text-ink-2">
-          共 {queue.length} 个 · 认识 {stats.known} · 不认识 {stats.unknown}
+          共 {chosen.length} 个 · 认识 {known} · 不认识 {chosen.length - known}
         </p>
-        <div className="flex gap-3">
+        {words.length > 0 && (
+          <p className="text-[0.8125rem] leading-[1.7] text-ink-3">
+            趁热再过一遍，顺序打乱、题型重抽。
+          </p>
+        )}
+        <div className="flex flex-wrap gap-3">
+          {unknownWords.length > 0 && (
+            <button
+              type="button"
+              onClick={() => repeatRound(unknownWords)}
+              className="rounded-[10px] bg-ink px-4 py-2 text-sm font-medium text-card"
+            >
+              只练生词 {unknownWords.length} 个
+            </button>
+          )}
+          {words.length > 0 && (
+            <button
+              type="button"
+              onClick={() => repeatRound(words)}
+              className={`rounded-[10px] px-4 py-2 text-sm ${
+                unknownWords.length > 0
+                  ? 'border border-rule text-ink'
+                  : 'bg-ink font-medium text-card'
+              }`}
+            >
+              全部再来 {words.length} 个
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setPhase('setup')}
-            className="rounded-[10px] bg-ink px-4 py-2 text-sm font-medium text-card"
+            className="rounded-[10px] border border-rule px-4 py-2 text-sm text-ink"
           >
             再来一轮
           </button>
@@ -162,85 +403,47 @@ export default function ReviewPage() {
     )
   }
 
-  const card = queue[cursor]
+  const entry = queue[cursor]
+  const unknownSoFar = Object.values(verdicts).filter((v) => v === false).length
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-5 px-5 py-10 sm:px-6">
+      {/* 进度看的是生词，不是卡片张数 —— 卡是出到攒够为止的，分母没有意义 */}
       <p className="font-mono text-[0.8125rem] text-ink-3">
-        {cursor + 1} / {queue.length}
+        第 {cursor + 1} 张 · 生词 {unknownSoFar} / {limit}
       </p>
-
-      {/* 用 div 而非 button 作卡片外壳：翻面后卡内有发音按钮，button 嵌 button 是非法
-          HTML。空格翻面由全局 keydown 处理，这里再补 Enter，role/tabIndex 保证可聚焦。 */}
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => setRevealed(!revealed)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') setRevealed((r) => !r)
-        }}
-        className="min-h-56 cursor-pointer rounded-[10px] border border-rule bg-card p-8 text-left shadow-[0_1px_2px_rgba(20,33,61,0.04)] focus:border-focus focus:outline-none"
-      >
-        <p
-          data-testid="review-word"
-          className="text-[2.25rem] font-semibold tracking-[-0.02em] text-ink"
-        >
-          {card.word}
+      {cursor < mustDo && (
+        <p className="text-[0.8125rem] text-ink-3">
+          先把上一批背过的 {mustDo} 个词过完（{cursor + 1}/{mustDo}），过完才收工
         </p>
-        {revealed ? (
-          <div className="mt-5 border-t border-rule pt-4">
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              {card.phonetic && (
-                <span className="font-mono text-[0.9rem] text-ink-2">{card.phonetic}</span>
-              )}
-              <AudioButton word={card.word} />
-            </div>
-            {card.senses.length > 0 ? (
-              <ul className="mt-3 flex flex-col gap-1">
-                {card.senses.map((s, i) => (
-                  <li key={i} className="text-[1rem] leading-[1.7] text-ink">
-                    {s.pos && (
-                      <span className="mr-1.5 font-mono text-[0.8125rem] text-ink-2">
-                        {s.pos}
-                      </span>
-                    )}
-                    {s.meaning}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="mt-3 text-[0.9375rem] text-ink-3">词库暂无中文释义</p>
-            )}
-            {card.sourceContext && (
-              <p className="mt-3 text-[0.875rem] leading-[1.7] text-ink-3">
-                “{card.sourceContext}”
-              </p>
-            )}
-            <p className="mt-3 font-mono text-[0.75rem] text-ink-3">
-              熟练度 {card.familiarity}/5 · 已复习 {card.reviewCount} 次
-            </p>
-          </div>
-        ) : (
-          <p className="mt-5 text-[0.9375rem] text-ink-3">点击或按空格翻面</p>
-        )}
-      </div>
+      )}
+      {skipped > 0 && (
+        <p className="text-[0.8125rem] text-ink-3">
+          {skipped} 个无中文释义的词已跳过
+        </p>
+      )}
 
-      {revealed && (
-        <div className="flex gap-3">
-          <button
-            type="button"
-            onClick={() => mark(false)}
-            className="flex-1 rounded-[10px] border border-rule py-3 text-sm text-ink"
-          >
-            不认识 <span className="font-mono text-[0.75rem] text-ink-3">1</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => mark(true)}
-            className="flex-1 rounded-[10px] bg-ink py-3 text-sm font-medium text-card"
-          >
-            认识 <span className="font-mono text-[0.75rem] text-card/70">2</span>
-          </button>
-        </div>
+      {/* key={cursor}：换卡即重新挂载，翻面/作答状态自然归零。判定活在页面上，
+          所以翻回上一张时它还在，卡片只负责把它显示出来 */}
+      {entry.type === 'en2cn' ? (
+        <ReviewFlipCard
+          key={cursor}
+          card={entry.item}
+          verdict={verdicts[cursor] ?? null}
+          onMark={markAndNext}
+          canPrev={cursor > 0}
+          onPrev={prev}
+          onNext={next}
+        />
+      ) : (
+        <ReviewInputCard
+          key={cursor}
+          card={entry.item}
+          verdict={verdicts[cursor] ?? null}
+          onVerdict={setVerdict}
+          canPrev={cursor > 0}
+          onPrev={prev}
+          onNext={next}
+        />
       )}
     </main>
   )

@@ -5,7 +5,7 @@ import { toEntry, type WordbookEntry } from '@/lib/wordbook/types'
 import { parseTranslation } from '@/lib/dict/senses'
 
 const COLS =
-  'id, word, word_key, source_context, note, review_count, familiarity, last_reviewed_at, created_at'
+  'id, word, word_key, source_context, note, review_count, familiarity, spell_ok_count, last_reviewed_at, created_at'
 
 /**
  * 给单词本条目补上词库里的中文释义与音标，供单词本/复习页做中英对照。

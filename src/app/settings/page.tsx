@@ -1,56 +1,82 @@
 'use client'
 
-import { useEffect, useId, useState } from 'react'
+import { useId, useState, useSyncExternalStore } from 'react'
 import {
-  getLocalModelConfig,
+  subscribeLocalModelConfig,
+  getLocalModelConfigSnapshot,
+  getLocalModelConfigServerSnapshot,
   saveLocalModelConfig,
   clearLocalModelConfig,
+  type LocalModelConfig,
 } from '@/lib/translate/localModel'
+
+interface FormState {
+  baseUrl: string
+  model: string
+  apiKey: string
+  prompt: string
+}
+
+const EMPTY_FORM: FormState = { baseUrl: '', model: '', apiKey: '', prompt: '' }
+
+function toForm(cfg: LocalModelConfig | null): FormState {
+  if (!cfg) return EMPTY_FORM
+  return {
+    baseUrl: cfg.baseUrl,
+    model: cfg.model,
+    apiKey: cfg.apiKey ?? '',
+    prompt: cfg.prompt ?? '',
+  }
+}
 
 export default function SettingsPage() {
   const baseId = useId()
-  const [baseUrl, setBaseUrl] = useState('')
-  const [model, setModel] = useState('')
-  const [apiKey, setApiKey] = useState('')
-  const [prompt, setPrompt] = useState('')
-  const [saved, setSaved] = useState(false)
-  const [enabled, setEnabled] = useState(false)
+  // 配置存 localStorage，服务端渲染读不到。订阅外部 store 而不是在 effect 里
+  // setState —— 后者会多一轮级联渲染。
+  const stored = useSyncExternalStore(
+    subscribeLocalModelConfig,
+    getLocalModelConfigSnapshot,
+    getLocalModelConfigServerSnapshot,
+  )
 
-  useEffect(() => {
-    const cfg = getLocalModelConfig()
-    if (cfg) {
-      setBaseUrl(cfg.baseUrl)
-      setModel(cfg.model)
-      setApiKey(cfg.apiKey ?? '')
-      setPrompt(cfg.prompt ?? '')
-      setEnabled(true)
-    }
-  }, [])
+  const [form, setForm] = useState<FormState>(() => toForm(stored))
+  const [syncedFrom, setSyncedFrom] = useState(stored)
+  const [saved, setSaved] = useState(false)
+
+  // 渲染期同步表单：hydration 完成后 stored 会从 null 变成真实配置，保存/清除
+  // 之后也会变。这是 React 文档里「外部值变化时调整 state」的写法，React 会在
+  // 提交前就地重渲染，不会闪一帧旧值。
+  if (syncedFrom !== stored) {
+    setSyncedFrom(stored)
+    setForm(toForm(stored))
+  }
+
+  const enabled = stored !== null
+
+  function update<K extends keyof FormState>(key: K, value: FormState[K]) {
+    setForm((f) => ({ ...f, [key]: value }))
+  }
 
   function save() {
-    if (!baseUrl.trim() || !model.trim()) return
+    if (!canSave) return
+    // 写完由 store 通知回来，表单会被上面的渲染期同步刷成规范化后的值
     saveLocalModelConfig({
-      baseUrl: baseUrl.trim(),
-      model: model.trim(),
-      apiKey: apiKey.trim() || undefined,
-      prompt: prompt.trim() || undefined,
+      baseUrl: form.baseUrl.trim(),
+      model: form.model.trim(),
+      apiKey: form.apiKey.trim() || undefined,
+      prompt: form.prompt.trim() || undefined,
     })
-    setEnabled(true)
     setSaved(true)
     setTimeout(() => setSaved(false), 2000)
   }
 
   function reset() {
+    // 同上：清除后 stored 变 null，表单被同步清空
     clearLocalModelConfig()
-    setBaseUrl('')
-    setModel('')
-    setApiKey('')
-    setPrompt('')
-    setEnabled(false)
     setSaved(false)
   }
 
-  const canSave = baseUrl.trim() !== '' && model.trim() !== ''
+  const canSave = form.baseUrl.trim() !== '' && form.model.trim() !== ''
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-5 py-10 sm:px-6">
@@ -79,13 +105,15 @@ export default function SettingsPage() {
           </span>
           <input
             id={`${baseId}-url`}
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
+            value={form.baseUrl}
+            onChange={(e) => update('baseUrl', e.target.value)}
             placeholder="http://localhost:11434/v1"
             className="rounded-[10px] border border-rule bg-card px-3 py-2 font-mono text-[0.9375rem] text-ink placeholder:text-ink-3 focus:border-focus"
           />
           <span className="text-[0.8125rem] text-ink-3">
-            OpenAI 兼容端点，会在其后拼 /chat/completions
+            OpenAI 兼容端点，会在其后拼 /chat/completions。
+            ollama 是 <span className="font-mono">:11434/v1</span>，
+            LM Studio 是 <span className="font-mono">:1234/v1</span>
           </span>
         </label>
 
@@ -94,19 +122,24 @@ export default function SettingsPage() {
             模型名 <span className="text-seal">*</span>
           </span>
           <input
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
+            value={form.model}
+            onChange={(e) => update('model', e.target.value)}
             placeholder="qwen2.5:7b"
             className="rounded-[10px] border border-rule bg-card px-3 py-2 font-mono text-[0.9375rem] text-ink placeholder:text-ink-3 focus:border-focus"
           />
+          <span className="text-[0.8125rem] text-ink-3">
+            要跟端点上的 id 一字不差。拿准确的名字：
+            <span className="font-mono">curl -s 端点/models</span>
+            。注意 embedding 模型不能用来翻译，得加载一个 chat / instruct 模型
+          </span>
         </label>
 
         <label className="flex flex-col gap-1.5">
           <span className="text-[0.875rem] font-medium text-ink">API Key（可选）</span>
           <input
             type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
+            value={form.apiKey}
+            onChange={(e) => update('apiKey', e.target.value)}
             placeholder="本地 ollama 通常不需要"
             className="rounded-[10px] border border-rule bg-card px-3 py-2 font-mono text-[0.9375rem] text-ink placeholder:text-ink-3 focus:border-focus"
           />
@@ -115,8 +148,8 @@ export default function SettingsPage() {
         <label className="flex flex-col gap-1.5">
           <span className="text-[0.875rem] font-medium text-ink">翻译提示词（可选）</span>
           <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
+            value={form.prompt}
+            onChange={(e) => update('prompt', e.target.value)}
             rows={4}
             placeholder="留空则用内置的按方向提示词"
             className="rounded-[10px] border border-rule bg-card px-3 py-2 text-[0.9375rem] leading-[1.7] text-ink placeholder:text-ink-3 focus:border-focus"
@@ -164,12 +197,20 @@ ngrok http 11434
 # 然后 Base URL 填隧道给出的 https 地址 + /v1`}
           </pre>
           <p>
-            2. 或让本地模型允许本站来源的跨域。以 ollama 为例：
+            2. 或让本地模型允许本站来源的跨域：
           </p>
           <pre className="overflow-x-auto rounded-[8px] bg-paper px-3 py-2 font-mono text-[0.75rem] text-ink">
-{`OLLAMA_ORIGINS=https://eng.eugen.uno ollama serve`}
+{`# ollama
+OLLAMA_ORIGINS=https://eng.eugen.uno ollama serve
+
+# LM Studio：Developer → Server Settings 勾上 Enable CORS
+# 或用命令行
+lms server start --cors`}
           </pre>
-          <p>在本机 http 开发环境（localhost）下不受这些限制，直接填即可。</p>
+          <p>
+            本机 http 开发环境（localhost）不受混合内容限制，但端口不同仍算跨域 ——
+            LM Studio 的 CORS 开关照样要打开。
+          </p>
         </div>
       </details>
     </main>
