@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // 桌面客户端是独立项目，有自己的工具链
+    "desktop/**",
   ]),
 ]);
 
