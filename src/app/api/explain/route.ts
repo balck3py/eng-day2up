@@ -4,6 +4,7 @@ import { createAdminSupabase } from '@/lib/supabase/admin'
 import { consumeQuota } from '@/lib/quota'
 import { buildExplainPrompt } from '@/lib/translate/prompt'
 import { getScheduler } from '@/lib/translate/instance'
+import { runWithQuota } from '@/lib/translate/withQuota'
 
 export const maxDuration = 60
 
@@ -34,20 +35,26 @@ export async function POST(request: Request) {
   }
 
   const db = createAdminSupabase()
-  if (!(await consumeQuota(db, user.id))) {
+  const outcome = await runWithQuota(
+    () => consumeQuota(db, user.id),
+    () => getScheduler().run(buildExplainPrompt(word, context)),
+  )
+  if (outcome.kind === 'quota') {
     return NextResponse.json(
       { error: '已达今日配额上限，明日 0 点重置。' },
       { status: 429 },
     )
   }
+  if (outcome.kind === 'error') {
+    return NextResponse.json({ error: `释义服务不可用：${outcome.message}` }, { status: 503 })
+  }
 
   try {
-    const result = await getScheduler().run(buildExplainPrompt(word, context))
     let explanation = ''
-    for await (const delta of result.chunks) explanation += delta
+    for await (const delta of outcome.result.chunks) explanation += delta
     return NextResponse.json({
       explanation: explanation.trim(),
-      provider: result.provider,
+      provider: outcome.result.provider,
     })
   } catch (e) {
     return NextResponse.json(
