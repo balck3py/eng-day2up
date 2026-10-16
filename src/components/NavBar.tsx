@@ -8,6 +8,7 @@ const LINKS = [
   { href: '/', label: '翻译' },
   { href: '/history', label: '历史' },
   { href: '/wordbook', label: '单词本' },
+  { href: '/reader', label: '加载第三方网站' },
   { href: '/settings', label: '设置' },
 ]
 
@@ -26,8 +27,9 @@ export function NavBar() {
 
   return (
     <nav className="border-b border-rule bg-card">
-      <div className="mx-auto flex w-full max-w-3xl items-center gap-5 px-5 py-3 sm:px-6">
-        <span className="font-semibold tracking-[-0.01em] text-ink">译</span>
+      <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-x-3 gap-y-2 sm:gap-x-5 px-5 py-3 sm:px-6">
+        {/* 窄屏放不下全部入口，品牌字先让位 */}
+        <span className="hidden font-semibold tracking-[-0.01em] text-ink sm:inline">译</span>
         {LINKS.map((l) => {
           const active = l.href === '/' ? pathname === '/' : pathname.startsWith(l.href)
           return (
