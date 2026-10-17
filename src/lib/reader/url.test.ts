@@ -12,8 +12,17 @@ describe('toFetchUrl', () => {
     expect(toFetchUrl('  https://example.com/a.md ')).toBe('https://example.com/a.md')
   })
 
+  it('不带域名的路径补默认文档站', () => {
+    expect(toFetchUrl('podcast/deep-dive/deep-dive-2.md')).toBe(
+      'https://qiniu.aiquannei.com/podcast/deep-dive/deep-dive-2.md',
+    )
+    expect(toFetchUrl('/podcast/a.md')).toBe('https://qiniu.aiquannei.com/podcast/a.md')
+    expect(toFetchUrl('deep-dive-2.md')).toBe('https://qiniu.aiquannei.com/deep-dive-2.md')
+  })
+
   it('缺协议时补 https', () => {
     expect(toFetchUrl('example.com/a.md')).toBe('https://example.com/a.md')
+    expect(toFetchUrl('qiniu.aiquannei.com/x.md')).toBe('https://qiniu.aiquannei.com/x.md')
   })
 
   it('非 http(s) 协议拒绝', () => {

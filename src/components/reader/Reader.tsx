@@ -65,11 +65,16 @@ export function Reader({ url }: { url: string }) {
         </label>
         <input
           id={inputId}
-          type="url"
+          // 不用 type="url"：浏览器会拦下不带协议的输入（如 podcast/a.md），
+          // 而那正是要支持的写法 —— 补全交给服务端的 toFetchUrl
+          type="text"
           inputMode="url"
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="粘贴 Markdown 文档地址，如 GitHub 上的 README.md"
+          placeholder="粘贴 Markdown 地址，或只填路径如 podcast/deep-dive/deep-dive-2.md"
           className="min-w-0 flex-1 rounded-[10px] border border-rule bg-card px-3 py-2 text-ink placeholder:text-ink-3 focus:border-focus"
         />
         <button
