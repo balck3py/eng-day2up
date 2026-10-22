@@ -22,7 +22,7 @@
 - **THEN** 两条请求的 `sourceContext` 各自为对应的那一句
 
 ### Requirement: 网页改动边界
-本变更 SHALL NOT 修改任何 API 路由、数据库 schema、页面结构或组件对外 props 形状以外的行为；新增逻辑限于 `src/lib/text/sentence.ts` 及上述三处调用点。
+本变更 SHALL NOT 修改任何 API 路由、数据库 schema、页面结构或组件对外 props 形状以外的行为；新增逻辑限于 `src/lib/text/sentence.ts`、上述三处调用点，以及阅读页把切句调用切换到 `src/lib/text/sentence.ts`（删除 `src/lib/reader/sentence.ts`）。
 
 #### Scenario: 回归
 - **WHEN** 运行网页 `npm test` 与 `npm run build`

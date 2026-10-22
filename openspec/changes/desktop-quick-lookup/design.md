@@ -103,6 +103,7 @@
 - 客户端配置一个 OpenAI 兼容端点：`baseUrl`、`model`、可选的 `apiKey` 和自定义 prompt。可以指向家里的 ollama，也可以指向云端。
 - 请求通过 `tauri-plugin-http` 发出，由 Rust 侧网络栈代发，绕开 WebView 的 CORS 与混合内容限制。返回流式结果。
 - 兼容推理模型：忽略 `delta.reasoning_content`，只拼接 `delta.content`。
+- 若端点指向 aiping.cn 的 `DeepSeek-V4-Flash`（与网页线上相同），请求应带 `thinking: { "type": "disabled" }`：实测不带时每句先输出 600–1300 字思考，首个译文字多等 1.4–5.7s（见 `translation-scheduling` spec 与归档 `2026-10-22-translate-latency`）。设置里提供开关，因为不认识该字段的严格端点会报 400。
 - 不做多 provider 熔断（单端点、单用户），失败就显示错误 + 重试按钮。
 - **单词模式不依赖 LLM**：词典查不到时，才可选地调用 LLM 生成释义仅作展示，不回写词库，并标注「AI 释义，未收录」。
 
@@ -116,6 +117,8 @@
 - `context-sentence` 的测试用例写成同一份数据表，网页（`src/lib/text/sentence.test.ts`）与客户端（`desktop/src/lib/sentence.test.ts`）各放一份副本。
 - 规则变更时，两边同步修改。
 - 这是对「不共享代码」约束的有意妥协：只复制数据，不建立依赖。
+- **阅读页（`web-reader`，已上线）先行用 `Intl.Segmenter` 实现了一份切句**：`src/lib/reader/sentence.ts`（`sentenceAt` / `sentenceContaining` / `sentencesCovering`）。它对缩写、小数的处理比本 spec 粗糙。`src/lib/text/sentence.ts` 落地后，阅读页 SHALL 改为调用它并删除 `src/lib/reader/sentence.ts`，保证网页只有一套切句行为（任务 1.6）。
+- `HardWordGrid` 已有可选 `contextFor(hw)` prop（阅读页用来按词传所在句）。任务 1.4 在不传 `contextFor` 时才用 `sentenceOf(context, hw.surface)`，传了就以它为准。
 
 ### D10 收藏语义（与网页一致）
 - 写入字段：
