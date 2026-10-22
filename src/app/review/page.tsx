@@ -171,8 +171,12 @@ export default function ReviewPage() {
       .then((r) => (r.ok ? r.json() : { ids: [] }))
       .then((d: { ids: string[] }) => d.ids)
       .catch(() => [] as string[])
+    // effect 被清理后（开发模式 StrictMode 会挂两次）这次加载的结果作废：
+    // 晚到的旧结果会把用户刚结算的名单盖回去，过期存档也会被结算两遍
+    let stale = false
     void Promise.all([words, leftover])
       .then(([entries, ids]) => {
+        if (stale) return
         setAll(entries)
         setLeftoverIds(ids)
         const now = Date.now()
@@ -181,12 +185,15 @@ export default function ReviewPage() {
         if (saved && isExpired(saved, now)) settleSaved(saved)
         else setPending(saved)
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (!stale) setLoading(false)
+      })
     // 上次没写进去的判定先补上（登录过期、断网留下的）
     flush()
     window.addEventListener('online', flush)
     window.addEventListener('focus', flush)
     return () => {
+      stale = true
       window.removeEventListener('online', flush)
       window.removeEventListener('focus', flush)
     }
