@@ -23,4 +23,6 @@ export interface TranslationProvider {
 export interface TranslationStream {
   provider: ProviderName
   chunks: AsyncIterable<string>
+  /** 不读了：掐断上游请求。chunks 一次都没迭代过时只能靠它（生成器未启动，finally 不会跑）。 */
+  cancel(): void
 }

@@ -183,4 +183,122 @@ describe('createScheduler', () => {
     expect(r.provider).toBe('cloud')
     expect(aborted).toBe(true)
   })
+
+  // —— 最后一个 provider（身后没有兜底）：熔断与 5 秒超时只会把偶发慢请求放大成
+  //    整段不可用，所以它永不被熔断跳过、超时放宽，并且用对冲请求压尾延迟。
+
+  it('最后一个 provider 连续失败也不熔断，每次都会再试', async () => {
+    const cloud = failProvider('cloud')
+    const spy = vi.spyOn(cloud, 'stream')
+    const s = createScheduler([cloud], { failureThreshold: 1, cooldownMs: 60_000 })
+    for (let i = 0; i < 3; i++) await expect(s.run(MSGS)).rejects.toThrow()
+    // 每次 run：首发 + 快速失败后的一次重试
+    expect(spy).toHaveBeenCalledTimes(6)
+  })
+
+  it('最后一个 provider 用放宽的超时', async () => {
+    const s = createScheduler([slowProvider('cloud', 120)], {
+      firstByteTimeoutMs: 50,
+      lastFirstByteTimeoutMs: 500,
+      hedgeAfterMs: null,
+    })
+    const r = await s.run(MSGS)
+    expect(await drain(r.chunks)).toBe('late')
+  })
+
+  it('最后一个 provider 首字节迟迟不来时发对冲请求，先到者胜，落后者被 abort', async () => {
+    let calls = 0
+    let firstAborted = false
+    const cloud: TranslationProvider = {
+      name: 'cloud',
+      async *stream(_m, signal) {
+        const n = ++calls
+        if (n === 1) {
+          signal?.addEventListener('abort', () => {
+            firstAborted = true
+          })
+          await new Promise((r) => setTimeout(r, 400))
+          yield '慢'
+        } else {
+          yield '快'
+        }
+      },
+    }
+    const s = createScheduler([cloud], { lastFirstByteTimeoutMs: 1000, hedgeAfterMs: 30 })
+    const t0 = Date.now()
+    const r = await s.run(MSGS)
+    expect(Date.now() - t0).toBeLessThan(300)
+    expect(await drain(r.chunks)).toBe('快')
+    expect(firstAborted).toBe(true)
+  })
+
+  it('最后一个 provider 快速失败时立即重试一次', async () => {
+    let calls = 0
+    const cloud: TranslationProvider = {
+      name: 'cloud',
+      async *stream() {
+        if (++calls === 1) throw new Error('502')
+        yield 'ok'
+      },
+    }
+    const s = createScheduler([cloud], { hedgeAfterMs: 10_000 })
+    expect(await drain((await s.run(MSGS)).chunks)).toBe('ok')
+  })
+
+  it('最后一个 provider 两次都没在超时内到达时报超时', async () => {
+    const s = createScheduler([slowProvider('cloud', 300)], {
+      lastFirstByteTimeoutMs: 60,
+      hedgeAfterMs: 20,
+    })
+    await expect(s.run(MSGS)).rejects.toThrow('首字节超时')
+  })
+
+  it('身后还有兜底的 provider 不对冲，超时直接降级', async () => {
+    const ollama = slowProvider('ollama', 200)
+    const spy = vi.spyOn(ollama, 'stream')
+    const s = createScheduler([ollama, okProvider('cloud', ['ok'])], {
+      firstByteTimeoutMs: 50,
+      hedgeAfterMs: 10,
+    })
+    expect((await s.run(MSGS)).provider).toBe('cloud')
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it('最后一个 provider 只发心跳（在思考）迟迟不出正文时也会对冲', async () => {
+    let calls = 0
+    const cloud: TranslationProvider = {
+      name: 'cloud',
+      async *stream() {
+        if (++calls === 1) {
+          // 不认「关闭思考」参数的上游：先吐一长串思考心跳
+          for (let i = 0; i < 20; i++) {
+            yield ''
+            await new Promise((r) => setTimeout(r, 20))
+          }
+          yield '慢'
+        } else {
+          yield '快'
+        }
+      },
+    }
+    const s = createScheduler([cloud], { lastFirstByteTimeoutMs: 2000, hedgeAfterMs: 50 })
+    expect(await drain((await s.run(MSGS)).chunks)).toBe('快')
+  })
+
+  it('cancel() 掐断上游（如超配额时丢弃已发出的请求）', async () => {
+    let aborted = false
+    const cloud: TranslationProvider = {
+      name: 'cloud',
+      async *stream(_m, signal) {
+        signal?.addEventListener('abort', () => {
+          aborted = true
+        })
+        yield 'a'
+        yield 'b'
+      },
+    }
+    const r = await createScheduler([cloud]).run(MSGS)
+    r.cancel()
+    expect(aborted).toBe(true)
+  })
 })

@@ -4,6 +4,7 @@ import { createAdminSupabase } from '@/lib/supabase/admin'
 import { consumeQuota } from '@/lib/quota'
 import { buildTranslatePrompt } from '@/lib/translate/prompt'
 import { getScheduler } from '@/lib/translate/instance'
+import { runWithQuota } from '@/lib/translate/withQuota'
 import type { Direction } from '@/lib/translate/types'
 
 // 长段落的流式输出可能跑满一分钟；不设的话会被平台默认时限截断。
@@ -28,22 +29,20 @@ export async function POST(request: Request) {
   }
 
   const db = createAdminSupabase()
-  if (!(await consumeQuota(db, user.id))) {
+  const outcome = await runWithQuota(
+    () => consumeQuota(db, user.id),
+    () => getScheduler().run(buildTranslatePrompt(text, direction)),
+  )
+  if (outcome.kind === 'quota') {
     return NextResponse.json(
       { error: '已达今日翻译配额上限，明日 0 点重置。' },
       { status: 429 },
     )
   }
-
-  let result
-  try {
-    result = await getScheduler().run(buildTranslatePrompt(text, direction))
-  } catch (e) {
-    return NextResponse.json(
-      { error: `翻译服务不可用：${(e as Error).message}` },
-      { status: 503 },
-    )
+  if (outcome.kind === 'error') {
+    return NextResponse.json({ error: `翻译服务不可用：${outcome.message}` }, { status: 503 })
   }
+  const { result } = outcome
 
   const encoder = new TextEncoder()
   const send = (obj: unknown) => encoder.encode(`data: ${JSON.stringify(obj)}\n\n`)
