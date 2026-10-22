@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createServerSupabase } from '@/lib/supabase/server'
-import { nextFamiliarity, nextSpellOkCount } from '@/lib/review/mark'
+import { nextFamiliarity, nextSpellOkCount, resolveReviewedAt } from '@/lib/review/mark'
 import type { QuizType } from '@/lib/review/quiz'
 
 export async function POST(request: Request) {
@@ -14,6 +14,7 @@ export async function POST(request: Request) {
     id?: unknown
     known?: unknown
     quizType?: unknown
+    reviewedAt?: unknown
   } | null
   const id = typeof body?.id === 'string' ? body.id : ''
   const known = body?.known === true
@@ -47,7 +48,8 @@ export async function POST(request: Request) {
       familiarity,
       review_count: reviewCount,
       spell_ok_count: spellOkCount,
-      last_reviewed_at: new Date().toISOString(),
+      // 补写的判定带着原始作答时间，见 resolveReviewedAt
+      last_reviewed_at: resolveReviewedAt(body?.reviewedAt, Date.now()),
       // SM-2 的 due_at / ease_factor / interval_days 第一版不动
     })
     .eq('id', id)

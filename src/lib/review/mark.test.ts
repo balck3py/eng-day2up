@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { nextFamiliarity, nextSpellOkCount, owesSpelling, SPELL_QUOTA } from './mark'
+import { nextFamiliarity, nextSpellOkCount, owesSpelling, resolveReviewedAt, SPELL_QUOTA } from './mark'
 
 describe('nextFamiliarity', () => {
   it('认识则加一', () => {
@@ -83,5 +83,24 @@ describe('owesSpelling', () => {
 
   it('刚好到 4 还算生词', () => {
     expect(owesSpelling(4, 0)).toBe(true)
+  })
+})
+
+describe('resolveReviewedAt', () => {
+  const now = Date.parse('2026-10-22T12:00:00Z')
+  it('7 天内的作答时间原样采用', () => {
+    expect(resolveReviewedAt('2026-10-21T13:00:00.000Z', now)).toBe('2026-10-21T13:00:00.000Z')
+  })
+  it('没报、报了脏数据，用当前时间', () => {
+    expect(resolveReviewedAt(undefined, now)).toBe(new Date(now).toISOString())
+    expect(resolveReviewedAt('garbage', now)).toBe(new Date(now).toISOString())
+    expect(resolveReviewedAt(12345, now)).toBe(new Date(now).toISOString())
+  })
+  it('早于 7 天前不信，用当前时间', () => {
+    expect(resolveReviewedAt('2026-10-01T00:00:00Z', now)).toBe(new Date(now).toISOString())
+  })
+  it('略快的客户端时钟钳回当前时间，明显的未来时间不信', () => {
+    expect(resolveReviewedAt(new Date(now + 30_000).toISOString(), now)).toBe(new Date(now).toISOString())
+    expect(resolveReviewedAt('2026-10-23T00:00:00Z', now)).toBe(new Date(now).toISOString())
   })
 })
