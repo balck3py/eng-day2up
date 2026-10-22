@@ -104,3 +104,60 @@ body {
     opacity: 0.6;
   }
 }
+
+/* 阅读页：第三方 Markdown 的排版。只管文档流本身，配色全部走现有 token。 */
+.reader-prose {
+  color: var(--ink);
+  font-size: 1.0625rem;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+.reader-prose > * + * {
+  margin-top: 1em;
+}
+.reader-prose > :first-child {
+  margin-top: 0;
+}
+.reader-prose :is(h1, h2, h3, h4, h5, h6) {
+  margin-top: 1.6em;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+.reader-prose h1 { font-size: 1.75rem; }
+.reader-prose h2 { font-size: 1.375rem; padding-bottom: 0.3em; border-bottom: 1px solid var(--rule); }
+.reader-prose h3 { font-size: 1.1875rem; }
+.reader-prose a { color: var(--focus); text-decoration: underline; text-underline-offset: 2px; }
+.reader-prose :is(ul, ol) { padding-left: 1.5em; }
+.reader-prose ul { list-style: disc; }
+.reader-prose ol { list-style: decimal; }
+.reader-prose li + li { margin-top: 0.25em; }
+.reader-prose blockquote {
+  padding-left: 1em;
+  border-left: 3px solid var(--rule);
+  color: var(--ink-2);
+}
+.reader-prose code {
+  font-family: var(--font-mono), ui-monospace, monospace;
+  font-size: 0.875em;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+}
+.reader-prose pre {
+  overflow-x: auto;
+  padding: 0.9em 1em;
+  border-radius: 10px;
+  background: var(--card);
+  border: 1px solid var(--rule);
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+.reader-prose pre code { padding: 0; border: 0; background: none; font-size: inherit; }
+.reader-prose img { max-width: 100%; height: auto; display: inline-block; }
+.reader-prose hr { border: 0; border-top: 1px solid var(--rule); }
+.reader-prose table { display: block; overflow-x: auto; border-collapse: collapse; font-size: 0.9375rem; }
+.reader-prose :is(th, td) { padding: 0.4em 0.75em; border: 1px solid var(--rule); text-align: left; }
+.reader-prose th { font-weight: 600; background: var(--card); }
+.reader-prose input[type='checkbox'] { margin-right: 0.4em; }

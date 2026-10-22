@@ -141,9 +141,15 @@ function Card({ hw, context }: { hw: HardWord; context: string }) {
 export function HardWordGrid({
   words,
   context,
+  contextFor,
+  compact = false,
 }: {
   words: HardWord[]
   context: string
+  /** 按词给出它所在的句子（收藏与「本句」释义用）；不传则整段 context 共用 */
+  contextFor?: (hw: HardWord) => string
+  /** 窄容器（如阅读页浮窗）里固定单列 */
+  compact?: boolean
 }) {
   if (words.length === 0) return null
   return (
@@ -154,9 +160,9 @@ export function HardWordGrid({
           {words.length} · 点开看它在本文中的意思
         </span>
       </div>
-      <ul className="grid gap-2 sm:grid-cols-2">
+      <ul className={compact ? 'grid gap-2' : 'grid gap-2 sm:grid-cols-2'}>
         {words.map((hw) => (
-          <Card key={hw.word} hw={hw} context={context} />
+          <Card key={hw.word} hw={hw} context={contextFor ? contextFor(hw) : context} />
         ))}
       </ul>
     </section>

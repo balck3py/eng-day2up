@@ -7,7 +7,7 @@ import { TranslateResult } from '@/components/TranslateResult'
 import type { WordDetail } from '@/lib/dict/types'
 import type { HardWord } from '@/lib/hardwords/extract'
 import type { Direction, ProviderName } from '@/lib/translate/types'
-import { getLocalModelConfig, streamLocalTranslate } from '@/lib/translate/localModel'
+import { fetchHardWords, streamTranslate } from '@/lib/translate/client'
 import { lookupWordClient } from '@/lib/dict/clientLookup'
 import { addHistory } from '@/lib/history/store'
 
@@ -81,82 +81,24 @@ export default function HomePage() {
     // 难词拆解与译文并行发起 —— 前者走数据库，通常先到。
     // 中译英不拆难词：难词拆解只对英文源文本有意义。
     const hardWordsPromise =
-      direction === 'zh2en'
-        ? Promise.resolve()
-        : fetch('/api/hard-words', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text }),
-          })
-            .then((r) => (r.ok ? r.json() : { words: [] }))
-            .then((d: { words: HardWord[] }) => setHardWords(d.words))
-            .catch(() => setHardWords([]))
-
-    // 配置了本地模型就由浏览器直连它（覆盖服务端）；否则走默认后端。
-    const local = getLocalModelConfig()
+      direction === 'zh2en' ? Promise.resolve() : fetchHardWords(text).then(setHardWords)
 
     // 本地累加完整译文，流结束后记一条历史（state 更新是异步的，不能直接读 translation）
     let full = ''
-
-    try {
-      if (local) {
-        setProvider('local')
-        for await (const delta of streamLocalTranslate(text, direction, local)) {
-          full += delta
-          setTranslation((t) => t + delta)
-        }
-      } else {
-        const res = await fetch('/api/translate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, direction }),
-        })
-        if (!res.ok || !res.body) {
-          const data = (await res.json().catch(() => ({}))) as { error?: string }
-          setError(data.error ?? '翻译失败，请重试。')
-          return
-        }
-        setProvider(res.headers.get('X-Provider') as ProviderName | null)
-
-        const reader = res.body.getReader()
-        const decoder = new TextDecoder()
-        let buffer = ''
-        for (;;) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buffer += decoder.decode(value, { stream: true })
-          let nl: number
-          while ((nl = buffer.indexOf('\n')) >= 0) {
-            const line = buffer.slice(0, nl).trim()
-            buffer = buffer.slice(nl + 1)
-            if (!line.startsWith('data:')) continue
-            try {
-              const evt = JSON.parse(line.slice(5).trim()) as {
-                type: string
-                value?: string
-              }
-              if (evt.type === 'delta') {
-                full += evt.value ?? ''
-                setTranslation((t) => t + (evt.value ?? ''))
-              } else if (evt.type === 'error') setError(`响应中断：${evt.value}`)
-            } catch {
-              // 单帧解析失败不该毁掉整段译文，跳过继续读
-            }
-          }
-        }
-      }
-    } catch {
-      setError(
-        local
-          ? '本地模型调用失败，请检查设置里的 Base URL、跨域与混合内容限制。'
-          : '网络错误，已保留收到的部分译文。',
-      )
-    } finally {
-      setStreaming(false)
-      // 收到了译文就记历史（哪怕中途报错也保留已得部分；难词不参与）
-      if (full.trim()) addHistory(text, full)
-      await hardWordsPromise
-    }
+    const outcome = await streamTranslate(
+      text,
+      direction,
+      (delta) => {
+        full += delta
+        setTranslation((t) => t + delta)
+      },
+      setProvider,
+    )
+    if (outcome.error) setError(outcome.error)
+    setStreaming(false)
+    // 收到了译文就记历史（哪怕中途报错也保留已得部分；难词不参与）
+    if (full.trim()) addHistory(text, full)
+    await hardWordsPromise
   }
 
   const showResult = source !== '' && (translation !== '' || hardWords.length > 0)
