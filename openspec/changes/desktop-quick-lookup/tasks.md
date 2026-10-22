@@ -6,9 +6,10 @@
 - [x] 1.1 编写切句测试向量 `src/lib/text/sentence.vectors.ts`（覆盖 context-sentence spec 全部场景：普通、换行、无标点、缩写、小数、首字母缩写、省略号、中文标点、词边界、找不到、超长截取）
 - [x] 1.2 TDD 实现 `src/lib/text/sentence.ts`：`sentenceAt(text, start, end)`、`sentenceOf(text, surface)`、500 字居中截取，`sentence.test.ts` 跑通全部向量
 - [x] 1.3 `SelectionPopover.tsx`：选中时从选区所在文本节点 + 偏移计算句子，传给 `WordCard` 的 `sourceContext`（保持组件对外 props 不变）
-- [x] 1.4 `HardWordGrid.tsx`：收藏时用 `sentenceOf(context, hw.surface)`，失败退回原值
+- [x] 1.4 `HardWordGrid.tsx`：未传 `contextFor` 时收藏用 `sentenceOf(context, hw.surface)`，失败退回原值；传了 `contextFor`（阅读页）以它为准
 - [x] 1.5 `HistoryWordPicker.tsx`：每个候选用 `sentenceOf(text, c.surface)`，失败退回 `text.slice(0, 500)`
-- [x] 1.6 验证：`npm test`、`npm run lint`、`npm run build` 通过；`git diff --stat` 确认 `src/app/api/**`、`supabase/**` 无改动
+- [ ] 1.6 阅读页改用 `src/lib/text/sentence.ts`：替换 `ReaderSelection` / `SelectionPanel` 中对 `src/lib/reader/sentence.ts` 的调用，删除后者及其测试；`reader-selection-translate` spec 的场景仍全部通过
+- [ ] 1.7 验证：`npm test`、`npm run lint`、`npm run build` 通过；`git diff --stat` 确认 `src/app/api/**`、`supabase/**` 无改动
 
 ## 2. 网页侧隔离配置 [mac]
 
@@ -30,7 +31,7 @@
 - [x] 4.3 实现 `lookupWord(db, raw)`：精确与 lemma 并行查询 → 后缀候选按优先级挑选（`pickInOrder`）→ 未命中；音标读 `dict_cache` 降级 ECDICT；mock supabase 覆盖四条分支
 - [x] 4.4 复制分词/停用词/难词打分与提取，接入单词本熟练度阈值排除，带测试
 - [x] 4.5 收藏服务 `favorite(db, { word, sourceContext })`：先查 → 存在返回「已在单词本」→ 插入 → 23505 视为已存在；不使用 upsert；mock 覆盖三种分支
-- [x] 4.6 LLM 客户端：OpenAI 兼容流式解析（逐行 SSE、忽略 `reasoning_content`、多字节截断冲刷、提前中止时 cancel），带测试；翻译 prompt 与单词 AI 释义 prompt（禁止音标）
+- [ ] 4.6 LLM 客户端：OpenAI 兼容流式解析（逐行 SSE、忽略 `reasoning_content`、多字节截断冲刷、提前中止时 cancel），带测试；翻译 prompt 与单词 AI 释义 prompt（禁止音标）；可配置是否带 `thinking: disabled`（默认带，见 design D7）
 - [x] 4.7 上下文决策函数 `resolveContext(selection, mode, surface?)`：实现 desktop-lookup-popup spec 中三种来源规则，带测试
 
 ## 5. 客户端界面 [mac]

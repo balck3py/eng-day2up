@@ -26,7 +26,7 @@
 
 ### Modified Capabilities
 
-（`openspec/specs/` 目前为空，现有网页功能尚未建立 OpenSpec 规格，故无。）
+（无。`openspec/specs/` 现有 `reader-document-loading`、`reader-selection-translate`、`translation-scheduling`，本变更不改变其中任何要求；阅读页改用 `context-sentence` 的实现属于同一要求下的实现替换，见 design D9。）
 
 ## Impact
 
