@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+/* 设计 token：值复制自网页 src/app/globals.css（不引用），改动时两边同步 */
+:root {
+  --paper: #F5F7FA;
+  --card: #FFFFFF;
+  --ink: #14213D;
+  --ink-2: #47567A;
+  --ink-3: #5C6A87;
+  --rule: #DDE3EC;
+  --seal: #A8324A;
+  --jade: #2E6F5E;
+  --focus: #2B5CE6;
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-card: var(--card);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-rule: var(--rule);
+  --color-seal: var(--seal);
+  --color-jade: var(--jade);
+  --color-focus: var(--focus);
+  --font-sans: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #10141C;
+    --card: #171D28;
+    --ink: #E8ECF3;
+    --ink-2: #A8B4CC;
+    --ink-3: #7A87A3;
+    --rule: #2A3342;
+    --seal: #E0708A;
+    --jade: #5FB89C;
+    --focus: #6C93FF;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.streaming-caret {
+  display: inline-block;
+  width: 0.45ch;
+  height: 1.05em;
+  margin-left: 0.1ch;
+  vertical-align: -0.15em;
+  background: var(--ink-2);
+  animation: caret-blink 1s steps(1) infinite;
+}
+
+@keyframes caret-blink {
+  0%, 45% { opacity: 1; }
+  55%, 100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .streaming-caret { animation: none; opacity: 0.6; }
+}

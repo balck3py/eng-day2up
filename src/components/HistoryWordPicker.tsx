@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { tokenize } from '@/lib/hardwords/tokenize'
+import { sentenceOf } from '@/lib/text/sentence'
 
 interface Candidate {
   surface: string
@@ -72,8 +73,11 @@ export function HistoryWordPicker({ text }: { text: string }) {
         const res = await fetch('/api/wordbook', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          // 带上原文，单词本里就能看到这个词当初出现在哪句话里
-          body: JSON.stringify({ word: c.surface, sourceContext: text.slice(0, 500) }),
+          // 带上所在句子，单词本里就能看到这个词当初出现在哪句话里
+          body: JSON.stringify({
+            word: c.surface,
+            sourceContext: sentenceOf(text, c.surface) ?? text.slice(0, 500),
+          }),
         })
         if (res.ok) done.add(c.key)
         else failed++

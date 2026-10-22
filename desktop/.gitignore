@@ -1,0 +1,6 @@
+node_modules
+dist
+src-tauri/target
+src-tauri/gen
+# 根 .gitignore 忽略了 .env*，这里放行字段说明文件
+!.env.example
