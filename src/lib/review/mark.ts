@@ -41,3 +41,22 @@ export function nextSpellOkCount(
 export function owesSpelling(familiarity: number, spellOkCount: number): boolean {
   return familiarity < MAX_FAMILIARITY && spellOkCount < SPELL_QUOTA
 }
+
+/** 补写判定时，客户端报上来的作答时间最多往前追溯多久 */
+export const MAX_BACKDATE_MS = 7 * 24 * 60 * 60 * 1000
+/** 容忍客户端时钟比服务端快一点 */
+const CLOCK_SKEW_MS = 60 * 1000
+
+/**
+ * 决定写进 last_reviewed_at 的时间。补写时带上原始作答时间，否则三天前背的词
+ * 会被记成「刚背过」。时间不在 [now - 7 天, now + 1 分钟] 内、或解析不出来，
+ * 就不信它，用服务端当前时间。
+ */
+export function resolveReviewedAt(reported: unknown, now: number): string {
+  const at = typeof reported === 'string' ? Date.parse(reported) : NaN
+  if (Number.isFinite(at) && at <= now + CLOCK_SKEW_MS && at >= now - MAX_BACKDATE_MS) {
+    // 比服务端快的那一点钳回 now，别写进一个未来时间
+    return new Date(Math.min(at, now)).toISOString()
+  }
+  return new Date(now).toISOString()
+}
