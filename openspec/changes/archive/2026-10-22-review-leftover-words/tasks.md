@@ -31,4 +31,4 @@
 
 - [x] 5.1 `npm run lint`、`npm test` 全部通过
 - [x] 5.2 用 E2E 测试账号手测（不得使用本人账号数据）：常规复习产生生词 → 只练生词答对几个 → 刷新后名单不变；中途刷新能继续；手动删 cookie 模拟过期后作答 → 提示未保存 → 重新登录后补写成功
-- [ ] 5.3 提交并 push，随后 `vercel --prod --scope dennisliu2015fgmailcoms-projects` 部署
+- [x] 5.3 提交并 push，随后 `vercel --prod --scope dennisliu2015fgmailcoms-projects` 部署
