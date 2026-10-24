@@ -49,10 +49,10 @@ test('单词本页点「导出 EPUB」下载按加入顺序排列的书', async 
   const text = new TextDecoder().decode(buf)
   expect(text.slice(30, 58)).toBe('mimetypeapplication/epub+zip')
   // STORED 不压缩，正文就是明文：apple 先加入，排在 rabbit 前面
-  const apple = text.indexOf('<div class="w">apple</div>')
-  const rabbit = text.indexOf('<div class="w">rabbit</div>')
+  const apple = text.indexOf('<span class="w">apple</span>')
+  const rabbit = text.indexOf('<span class="w">rabbit</span>')
   expect(apple).toBeGreaterThan(0)
   expect(rabbit).toBeGreaterThan(apple)
-  expect(text).toContain('<div class="ex">An apple a day.</div>')
+  expect(text).not.toContain('An apple a day.') // 例句不进书
   expect(text).not.toContain('ɹ')
 })
