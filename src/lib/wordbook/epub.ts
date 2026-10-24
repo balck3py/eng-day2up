@@ -9,7 +9,7 @@ export interface EpubWord {
   createdAt: string
 }
 
-/** 按北京时间分章：只有一个用户，就在国内用。 */
+/** 书名日期按北京时间：只有一个用户，就在国内用。 */
 const TZ_OFFSET_MS = 8 * 60 * 60 * 1000
 
 /**
@@ -19,6 +19,7 @@ const TZ_OFFSET_MS = 8 * 60 * 60 * 1000
  * - ECDICT 把 ə 录成了西里尔字母 ә（U+04D9）、ɛ 录成 є（U+0454），
  *   字体回退时字形对不上，换成 IPA 原字符。
  * - ɡ（U+0261）不少阅读器字体缺字，换成普通 g。
+ * - ECDICT 的 ASCII 重音符号换成 IPA 的 ˈ ˌ，去掉备选读音。
  */
 const PHONETIC_FIXES: Record<string, string> = {
   'ɹ': 'r',
@@ -29,9 +30,15 @@ const PHONETIC_FIXES: Record<string, string> = {
 }
 
 export function normalizePhonetic(p: string | null): string {
-  const s = (p ?? '').trim().replace(/[ɹәӘєɡ]/g, (c) => PHONETIC_FIXES[c])
+  let s = (p ?? '').trim().replace(/[ɹәӘєɡ]/g, (c) => PHONETIC_FIXES[c])
   if (!s) return ''
-  return /^[/[]/.test(s) ? s : `/${s}/`
+  if (/^[/[]/.test(s)) return s
+  // ECDICT 写法：' 表主重音、. 或 , 表次重音，「, -'nu:-」这种是备选读音
+  s = s
+    .replace(/,\s.*$/, '')
+    .replace(/'/g, 'ˈ')
+    .replace(/[.,]/g, 'ˌ')
+  return `/${s}/`
 }
 
 /**
@@ -67,20 +74,13 @@ export function localDay(iso: string | number): string {
   return new Date(new Date(iso).getTime() + TZ_OFFSET_MS).toISOString().slice(0, 10)
 }
 
-/** 按加入时间正序排好，再按天分组（保持顺序）。 */
-export function groupByDay(words: EpubWord[]): [string, EpubWord[]][] {
-  const sorted = [...words].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
-  const groups = new Map<string, EpubWord[]>()
-  for (const w of sorted) {
-    const day = localDay(w.createdAt)
-    const list = groups.get(day)
-    if (list) list.push(w)
-    else groups.set(day, [w])
-  }
-  return [...groups]
+/** 按加入时间正序排（同一时刻保持原顺序）。 */
+export function sortByAdded(words: EpubWord[]): EpubWord[] {
+  return [...words].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
 }
 
-// 标准字号：单词 16px（天蓝色、不加粗），音标和中文小 2px（14px）、不上色。
+// 单词 18px（天蓝色、不加粗），音标和中文 14px、不上色。
+// 颜色同时写在 class 和行内 style 上：有的阅读器只认行内样式。
 // 每个元素用 div 独占一行 —— 不用 p，很多阅读器会给 p 强加首行缩进和段间距。
 const CSS = `html, body { font-size: 16px; }
 body { margin: 0.5em; line-height: 1.5; font-family: serif; }
@@ -88,7 +88,7 @@ h1 { font-size: 16px; font-weight: bold; margin: 0.8em 0 0.5em; border-bottom: 1
 div, p, li { text-indent: 0 !important; }
 div.entry { margin: 0 0 0.7em; page-break-inside: avoid; break-inside: avoid; }
 div.entry > div { margin: 0; padding: 0; }
-.w { font-size: 16px; font-weight: normal; color: #00a2e8; }
+.w { font-size: 18px; font-weight: normal; color: #00a2e8 !important; }
 .ph { font-size: 14px; font-family: "Charis SIL", "Doulos SIL", "Gentium Plus", "Noto Serif", "DejaVu Sans", sans-serif; }
 .zh { font-size: 14px; }
 nav ol { padding-left: 1.2em; margin: 0; }
@@ -108,33 +108,21 @@ ${body}
 /** 一个词两行：「单词 音标」一行、中文一行；缺音标或中文就不输出那部分。 */
 export function entryHtml(w: EpubWord): string {
   const ph = normalizePhonetic(w.phonetic)
-  const head = `<div class="head"><span class="w">${esc(w.word)}</span>${ph ? ` <span class="ph">${esc(ph)}</span>` : ''}</div>`
+  const head = `<div class="head"><span class="w" style="color:#00a2e8">${esc(w.word)}</span>${ph ? ` <span class="ph">${esc(ph)}</span>` : ''}</div>`
   const zh = meaningLine(w.translation)
   return `<div class="entry">${head}${zh ? `<div class="zh">${esc(zh)}</div>` : ''}</div>`
 }
 
 /**
- * 生成 EPUB3（同时带 toc.ncx 兼容老阅读器）。一天一章，目录可跳到某天。
- * `now` 用来写书名日期和 dcterms:modified，`id` 是书的唯一标识。
+ * 生成 EPUB3（同时带 toc.ncx 兼容老阅读器）。所有词按加入时间正序连续排在一章里，
+ * 不分页、不加日期标题。`now` 用来写书名日期和 dcterms:modified，`id` 是书的唯一标识。
  */
 export function buildWordbookEpub(words: EpubWord[], now: Date, id: string): Uint8Array {
-  const groups = groupByDay(words)
   const title = `生词本 ${localDay(now.getTime())}`
   const modified = now.toISOString().replace(/\.\d{3}Z$/, 'Z')
-  const chapters = groups.map(([day, items], i) => ({
-    file: `c${String(i + 1).padStart(3, '0')}.xhtml`,
-    label: `${day}（${items.length}）`,
-    html: xhtml(day, `<h1>${day}（${items.length} 个）</h1>\n${items.map(entryHtml).join('\n')}`),
-  }))
-
-  const navBody = `<nav epub:type="toc" id="toc"><h1>${esc(title)}（共 ${words.length} 个）</h1><ol>
-${chapters.map((c) => `<li><a href="${c.file}">${c.label}</a></li>`).join('\n')}
-</ol></nav>`
-  // 空单词本也得是合法的书：spine 至少一个条目，就放目录页
-  const spine =
-    chapters.length > 0
-      ? chapters.map((_, i) => `<itemref idref="c${i + 1}"/>`).join('\n')
-      : '<itemref idref="nav"/>'
+  const label = `${title}（共 ${words.length} 个）`
+  const body = xhtml(title, sortByAdded(words).map(entryHtml).join('\n'))
+  const navBody = `<nav epub:type="toc" id="toc"><h1>${esc(title)}</h1><ol><li><a href="words.xhtml">${esc(label)}</a></li></ol></nav>`
 
   const opf = `<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bid" xml:lang="zh-CN">
@@ -149,10 +137,10 @@ ${chapters.map((c) => `<li><a href="${c.file}">${c.label}</a></li>`).join('\n')}
 <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
 <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
 <item id="css" href="style.css" media-type="text/css"/>
-${chapters.map((c, i) => `<item id="c${i + 1}" href="${c.file}" media-type="application/xhtml+xml"/>`).join('\n')}
+<item id="words" href="words.xhtml" media-type="application/xhtml+xml"/>
 </manifest>
 <spine toc="ncx">
-${spine}
+<itemref idref="words"/>
 </spine>
 </package>`
 
@@ -161,9 +149,7 @@ ${spine}
 <head><meta name="dtb:uid" content="urn:uuid:${id}"/></head>
 <docTitle><text>${esc(title)}</text></docTitle>
 <navMap>
-${(chapters.length > 0 ? chapters : [{ file: 'nav.xhtml', label: title }])
-  .map((c, i) => `<navPoint id="n${i + 1}" playOrder="${i + 1}"><navLabel><text>${esc(c.label)}</text></navLabel><content src="${c.file}"/></navPoint>`)
-  .join('\n')}
+<navPoint id="n1" playOrder="1"><navLabel><text>${esc(label)}</text></navLabel><content src="words.xhtml"/></navPoint>
 </navMap>
 </ncx>`
 
@@ -179,6 +165,6 @@ ${(chapters.length > 0 ? chapters : [{ file: 'nav.xhtml', label: title }])
     { name: 'OEBPS/nav.xhtml', data: xhtml('目录', navBody) },
     { name: 'OEBPS/toc.ncx', data: ncx },
     { name: 'OEBPS/style.css', data: CSS },
-    ...chapters.map((c) => ({ name: `OEBPS/${c.file}`, data: c.html })),
+    { name: 'OEBPS/words.xhtml', data: body },
   ])
 }

@@ -49,10 +49,14 @@ test('单词本页点「导出 EPUB」下载按加入顺序排列的书', async 
   const text = new TextDecoder().decode(buf)
   expect(text.slice(30, 58)).toBe('mimetypeapplication/epub+zip')
   // STORED 不压缩，正文就是明文：apple 先加入，排在 rabbit 前面
-  const apple = text.indexOf('<span class="w">apple</span>')
-  const rabbit = text.indexOf('<span class="w">rabbit</span>')
+  const apple = text.indexOf('>apple</span>')
+  const rabbit = text.indexOf('>rabbit</span>')
   expect(apple).toBeGreaterThan(0)
   expect(rabbit).toBeGreaterThan(apple)
   expect(text).not.toContain('An apple a day.') // 例句不进书
   expect(text).not.toContain('ɹ')
+  // 不按日期分章，一个连续页面
+  expect(text).not.toContain('<h1>2')
+  // 音标按词形查 CMU
+  expect(text).toContain('<span class="ph">/ˈræbət/</span>')
 })
