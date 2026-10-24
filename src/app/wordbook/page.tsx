@@ -115,6 +115,14 @@ export default function WordbookPage() {
         >
           开始复习
         </Link>
+        {/* 普通链接直接下载：接口回 Content-Disposition: attachment */}
+        <a
+          href="/api/wordbook/epub"
+          download
+          className="shrink-0 rounded-[10px] border border-rule bg-card px-4 py-2 text-sm font-medium text-ink"
+        >
+          导出 EPUB
+        </a>
       </div>
 
       {(missing.length > 0 || fillNote) && (
