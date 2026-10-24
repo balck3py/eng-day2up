@@ -1,10 +1,20 @@
 import { NextResponse } from 'next/server'
 import { createServerSupabase } from '@/lib/supabase/server'
+import { dictionary as cmu } from 'cmu-pronouncing-dictionary'
+import { cmuCompound, cmuExact } from '@/lib/dict/arpabet'
 import { buildWordbookEpub, localDay, type EpubWord } from '@/lib/wordbook/epub'
+
+/** 只有半截的音标（如 contour 的 "/-tɔː(ɹ)/"）当作没有 */
+function whole(p: string | null | undefined): string | null {
+  return p && !/^[/[]?\s*-/.test(p.trim()) ? p : null
+}
 
 /**
  * 把当前用户的单词本按加入时间正序导出成 EPUB（给水墨屏看）。
  * 会话客户端 + RLS：wordbook 只能读到自己的，dict_entries / dict_cache 登录可读。
+ *
+ * 音标优先用 CMU 按词形查（屈折形式也准、格式统一），
+ * 查不到再回落到词库：dictionaryapi 美音 → ECDICT → 英音，最后才把复合词拆开拼。
  */
 export async function GET() {
   const db = await createServerSupabase()
@@ -44,8 +54,13 @@ export async function GET() {
     const c = cache.get(r.word_key)
     return {
       word: r.word,
-      // 美音优先（和单词本页一致的来源顺序），没有再用 ECDICT、英音
-      phonetic: c?.phonetic_us || d?.phonetic || c?.phonetic_uk || null,
+      phonetic:
+        cmuExact(r.word, cmu) ||
+        whole(c?.phonetic_us) ||
+        whole(d?.phonetic) ||
+        whole(c?.phonetic_uk) ||
+        cmuCompound(r.word, cmu) ||
+        null,
       translation: d?.translation ?? null,
       createdAt: r.created_at,
     }
