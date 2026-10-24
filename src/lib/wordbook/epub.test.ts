@@ -14,7 +14,6 @@ const w = (word: string, createdAt: string, extra: Partial<EpubWord> = {}): Epub
   word,
   phonetic: null,
   translation: null,
-  sourceContext: null,
   createdAt,
   ...extra,
 })
@@ -91,26 +90,23 @@ describe('groupByDay', () => {
 })
 
 describe('entryHtml', () => {
-  it('四个元素各占一行，缺的不输出', () => {
-    const full = entryHtml(
-      w('rabbit', '2026-10-01T00:00:00Z', {
-        phonetic: 'ˈɹæbɪt',
-        translation: 'n. 兔子',
-        sourceContext: 'A rabbit ran.',
-      }),
+  it('单词和音标一行、中文一行，缺的不输出', () => {
+    expect(
+      entryHtml(w('rabbit', '2026-10-01T00:00:00Z', { phonetic: 'ˈɹæbɪt', translation: 'n. 兔子' })),
+    ).toBe(
+      '<div class="entry"><div class="head"><span class="w">rabbit</span> <span class="ph">/ˈræbɪt/</span></div>' +
+        '<div class="zh">n. 兔子</div></div>',
     )
-    expect(full).toBe(
-      '<div class="entry"><div class="w">rabbit</div><div class="ph">/ˈræbɪt/</div>' +
-        '<div class="zh">n. 兔子</div><div class="ex">A rabbit ran.</div></div>',
+    expect(entryHtml(w('x', '2026-10-01T00:00:00Z'))).toBe(
+      '<div class="entry"><div class="head"><span class="w">x</span></div></div>',
     )
-    expect(entryHtml(w('x', '2026-10-01T00:00:00Z'))).toBe('<div class="entry"><div class="w">x</div></div>')
   })
 })
 
 describe('buildWordbookEpub', () => {
   const now = new Date('2026-10-24T04:00:00Z')
 
-  it('mimetype 在首位且不压缩，章节按天，样式 30px 无缩进', () => {
+  it('mimetype 在首位且不压缩，章节按天，单词 16px 天蓝、释义 14px、无缩进', () => {
     const book = buildWordbookEpub(
       [w('b', '2026-10-02T01:00:00Z'), w('a', '2026-10-01T01:00:00Z', { translation: 'n. 甲' })],
       now,
@@ -123,9 +119,10 @@ describe('buildWordbookEpub', () => {
     expect(files.get('OEBPS/content.opf')).toContain('<dc:title>生词本 2026-10-24</dc:title>')
     expect(files.get('OEBPS/c001.xhtml')).toContain('2026-10-01（1 个）')
     expect(files.get('OEBPS/c001.xhtml')).toContain('<div class="zh">n. 甲</div>')
-    expect(files.get('OEBPS/c002.xhtml')).toContain('<div class="w">b</div>')
+    expect(files.get('OEBPS/c002.xhtml')).toContain('<span class="w">b</span>')
     const css = files.get('OEBPS/style.css')!
-    expect(css).toContain('font-size: 30px')
+    expect(css).toMatch(/\.w \{ font-size: 16px; font-weight: normal; color: #00a2e8; \}/)
+    expect(css).toMatch(/\.zh \{ font-size: 14px; \}/)
     expect(css).toContain('text-indent: 0 !important')
   })
 

@@ -6,7 +6,6 @@ export interface EpubWord {
   phonetic: string | null
   /** ECDICT 原始 translation（行间可能是字面 `\n`） */
   translation: string | null
-  sourceContext: string | null
   createdAt: string
 }
 
@@ -81,17 +80,17 @@ export function groupByDay(words: EpubWord[]): [string, EpubWord[]][] {
   return [...groups]
 }
 
-// 3.8 寸水墨屏：字号 30px。每个元素用 div 独占一行 ——
-// 不用 p，很多阅读器会给 p 强加首行缩进和段间距。
-const CSS = `html, body { font-size: 30px; }
-body { margin: 0.3em; line-height: 1.45; font-family: serif; }
-h1 { font-size: 30px; font-weight: bold; margin: 0.6em 0 0.4em; border-bottom: 2px solid #000; text-indent: 0; }
+// 标准字号：单词 16px（天蓝色、不加粗），音标和中文小 2px（14px）、不上色。
+// 每个元素用 div 独占一行 —— 不用 p，很多阅读器会给 p 强加首行缩进和段间距。
+const CSS = `html, body { font-size: 16px; }
+body { margin: 0.5em; line-height: 1.5; font-family: serif; }
+h1 { font-size: 16px; font-weight: bold; margin: 0.8em 0 0.5em; border-bottom: 1px solid #000; text-indent: 0; }
 div, p, li { text-indent: 0 !important; }
-div.entry { margin: 0 0 0.9em; page-break-inside: avoid; break-inside: avoid; }
-div.entry > div { font-size: 30px; margin: 0; padding: 0; }
-.w { font-weight: bold; }
-.ph { font-family: "Charis SIL", "Doulos SIL", "Gentium Plus", "Noto Serif", "DejaVu Sans", sans-serif; }
-.ex { font-style: italic; }
+div.entry { margin: 0 0 0.7em; page-break-inside: avoid; break-inside: avoid; }
+div.entry > div { margin: 0; padding: 0; }
+.w { font-size: 16px; font-weight: normal; color: #00a2e8; }
+.ph { font-size: 14px; font-family: "Charis SIL", "Doulos SIL", "Gentium Plus", "Noto Serif", "DejaVu Sans", sans-serif; }
+.zh { font-size: 14px; }
 nav ol { padding-left: 1.2em; margin: 0; }
 `
 
@@ -106,16 +105,12 @@ ${body}
 </html>`
 }
 
-/** 一个词：单词 / 音标 / 中文 / 例句，各占一行；缺的那行不输出。 */
+/** 一个词两行：「单词 音标」一行、中文一行；缺音标或中文就不输出那部分。 */
 export function entryHtml(w: EpubWord): string {
-  const rows = [`<div class="w">${esc(w.word)}</div>`]
   const ph = normalizePhonetic(w.phonetic)
-  if (ph) rows.push(`<div class="ph">${esc(ph)}</div>`)
+  const head = `<div class="head"><span class="w">${esc(w.word)}</span>${ph ? ` <span class="ph">${esc(ph)}</span>` : ''}</div>`
   const zh = meaningLine(w.translation)
-  if (zh) rows.push(`<div class="zh">${esc(zh)}</div>`)
-  const ex = (w.sourceContext ?? '').trim()
-  if (ex) rows.push(`<div class="ex">${esc(ex)}</div>`)
-  return `<div class="entry">${rows.join('')}</div>`
+  return `<div class="entry">${head}${zh ? `<div class="zh">${esc(zh)}</div>` : ''}</div>`
 }
 
 /**

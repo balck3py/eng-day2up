@@ -14,11 +14,11 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: '未登录' }, { status: 401 })
 
   // PostgREST 单次最多 1000 行，分页取完
-  const rows: { word: string; word_key: string; source_context: string | null; created_at: string }[] = []
+  const rows: { word: string; word_key: string; created_at: string }[] = []
   for (let from = 0; ; from += 1000) {
     const { data, error } = await db
       .from('wordbook')
-      .select('word, word_key, source_context, created_at')
+      .select('word, word_key, created_at')
       .order('created_at', { ascending: true })
       .range(from, from + 999)
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
@@ -47,7 +47,6 @@ export async function GET() {
       // 美音优先（和单词本页一致的来源顺序），没有再用 ECDICT、英音
       phonetic: c?.phonetic_us || d?.phonetic || c?.phonetic_uk || null,
       translation: d?.translation ?? null,
-      sourceContext: r.source_context,
       createdAt: r.created_at,
     }
   })
