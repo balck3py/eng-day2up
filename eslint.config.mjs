@@ -14,6 +14,8 @@ const eslintConfig = defineConfig([
     "next-env.d.ts",
     // 桌面客户端是独立项目，有自己的工具链
     "desktop/**",
+    // Nested agent worktrees are independent checkouts with their own build output.
+    ".claude/worktrees/**",
   ]),
 ]);
 

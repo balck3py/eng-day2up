@@ -88,7 +88,7 @@ export function Reader({ url }: { url: string }) {
 
       {!url && (
         <p className="text-[0.9375rem] leading-[1.7] text-ink-3">
-          打开后，选中任意单词或句子，点下方出现的「译」查看翻译，难词可以连同所在句子收进单词本。
+          打开后，长按或选中英文即可在顶部自动翻译；单词可发音、加入生词本，滚动正文关闭浮窗。
         </p>
       )}
       {error && <p className="text-[0.9375rem] text-seal">{error}</p>}

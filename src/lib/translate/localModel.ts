@@ -105,11 +105,13 @@ function authHeaders(config: LocalModelConfig): Record<string, string> {
 async function chatComplete(
   config: LocalModelConfig,
   messages: ChatMessage[],
+  signal?: AbortSignal,
 ): Promise<string> {
   const res = await fetch(completionsUrl(config.baseUrl), {
     method: 'POST',
     headers: authHeaders(config),
     body: JSON.stringify({ model: config.model, messages, stream: false }),
+    signal,
   })
   if (!res.ok) throw new Error(`本地模型返回 ${res.status}`)
   const data = (await res.json()) as {
@@ -126,9 +128,10 @@ async function chatComplete(
 export async function generateLocalWordEntry(
   word: string,
   config: LocalModelConfig,
+  signal?: AbortSignal,
 ): Promise<AiEntry | null> {
   try {
-    const entry = parseAiEntry(await chatComplete(config, buildWordFallbackPrompt(word)), word)
+    const entry = parseAiEntry(await chatComplete(config, buildWordFallbackPrompt(word), signal), word)
     if (!entry || entry.senses.length === 0) return null
     return entry
   } catch {

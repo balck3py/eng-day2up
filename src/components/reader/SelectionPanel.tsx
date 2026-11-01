@@ -1,97 +1,80 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { WordCard } from '@/components/WordCard'
-import { HardWordGrid } from '@/components/HardWordGrid'
+import { FavoriteButton } from '@/components/FavoriteButton'
 import { lookupWordClient } from '@/lib/dict/clientLookup'
-import { fetchHardWords, streamTranslate } from '@/lib/translate/client'
-import { sentenceContaining } from '@/lib/reader/sentence'
+import { streamTranslate } from '@/lib/translate/client'
+import { pronounce } from '@/lib/audio/pronounce'
 import type { WordDetail } from '@/lib/dict/types'
-import type { HardWord } from '@/lib/hardwords/extract'
 
 export interface Picked {
-  /** 选中的原文 */
   text: string
-  /** 单词：它所在的那一句；句子：覆盖选区的完整句子（供难词挑各自的句子） */
   context: string
   isWord: boolean
+  truncated?: boolean
 }
 
-function WordPane({ picked }: { picked: Picked }) {
+/** Compact auxiliary result: four text lines, independently scrollable. */
+export function SelectionPanel({ picked, close }: { picked: Picked; close: () => void }) {
   const [detail, setDetail] = useState<WordDetail | null>(null)
-  const [done, setDone] = useState(false)
+  const [translation, setTranslation] = useState('')
+  const [busy, setBusy] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
+  const [speaking, setSpeaking] = useState(false)
+  const [speechError, setSpeechError] = useState(false)
 
   useEffect(() => {
+    const controller = new AbortController()
     let alive = true
-    void lookupWordClient(picked.text).then((d) => {
-      if (!alive) return
-      setDetail(d)
-      setDone(true)
-    })
-    return () => {
-      alive = false
+    async function query() {
+      setBusy(true); setError(null); setTranslation(''); setDetail(null)
+      if (picked.isWord) {
+        const result = await lookupWordClient(picked.text, controller.signal)
+        if (!alive) return
+        setDetail(result)
+        if (!result) setError('查询失败，请重试')
+      } else {
+        const outcome = await streamTranslate(picked.text, 'en2zh', (delta) => {
+          if (alive) setTranslation((text) => text + delta)
+        }, undefined, controller.signal)
+        if (!alive) return
+        setError(outcome.error)
+      }
+      setBusy(false)
     }
-  }, [picked.text])
+    void query()
+    return () => { alive = false; controller.abort() }
+  }, [picked.text, picked.isWord, attempt])
 
-  if (!done) return <p className="p-4 text-[0.9375rem] text-ink-3">查询中…</p>
-  if (!detail) return <p className="p-4 text-[0.9375rem] text-ink-2">查询失败，请稍后重试。</p>
+  async function speak() {
+    if (speaking || !detail) return
+    setSpeaking(true); setSpeechError(false)
+    const result = await pronounce(detail.word, 'us')
+    setSpeaking(false); setSpeechError(result === 'failed')
+  }
+
   return (
     <>
-      <WordCard detail={detail} variant="embedded" sourceContext={picked.context} />
-      <p className="border-t border-rule px-4 py-2.5 text-[0.8125rem] leading-[1.6] text-ink-3">
-        <span className="font-mono">收藏时连同此句：</span>
-        {picked.context}
-      </p>
+      <div className="flex min-h-8 items-center gap-2 border-b border-rule px-3 py-1 text-xs text-ink-3">
+        <span className="min-w-0 flex-1 truncate">{picked.isWord ? (detail?.word ?? picked.text) : '中文翻译'}{picked.truncated && ' · 已截取前 2000 字'}</span>
+        {picked.isWord && detail && <>
+          <button type="button" aria-label="播放单词发音" disabled={speaking} onClick={() => void speak()} className="shrink-0 rounded px-1 disabled:opacity-50">{speaking ? '…' : '🔊'}</button>
+          {detail.matchedFrom !== 'none' && <FavoriteButton word={detail.word} sourceContext={picked.context} />}
+        </>}
+        <button type="button" aria-label="关闭翻译" onClick={close} className="shrink-0 rounded px-1 text-lg leading-none">×</button>
+      </div>
+      <div data-translation-content tabIndex={0} aria-label="翻译内容" aria-live="polite" aria-busy={busy}
+        className="m-3 overflow-y-auto overscroll-contain whitespace-pre-wrap break-words text-sm leading-[1.5]"
+        style={{ maxHeight: '6em' }}>
+        {picked.isWord && detail && <>
+          <p className="font-mono text-ink-3">{detail.phoneticUs ?? detail.phonetic ?? detail.phoneticUk ?? '暂无音标'}</p>
+          {detail.senses.length ? detail.senses.map((sense, i) => <p key={i}>{sense.pos} {sense.meaning}</p>) : <p>词典未收录这个词。</p>}
+        </>}
+        {!picked.isWord && translation}
+        {busy && <span className="text-ink-3">{translation ? '…' : '查询中…'}</span>}
+        {(error || speechError) && <p role="alert" className="text-seal">{error ?? '发音加载失败'} {error && <button type="button" onClick={() => setAttempt((n) => n + 1)} className="underline">重试</button>}</p>}
+      </div>
     </>
   )
-}
-
-function SentencePane({ picked }: { picked: Picked }) {
-  const [translation, setTranslation] = useState('')
-  const [streaming, setStreaming] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [hardWords, setHardWords] = useState<HardWord[]>([])
-
-  useEffect(() => {
-    let alive = true
-    void fetchHardWords(picked.text).then((w) => alive && setHardWords(w))
-    void streamTranslate(picked.text, 'en2zh', (d) => {
-      if (alive) setTranslation((t) => t + d)
-    }).then((o) => {
-      if (!alive) return
-      setError(o.error)
-      setStreaming(false)
-    })
-    return () => {
-      alive = false
-    }
-  }, [picked.text])
-
-  return (
-    <div className="flex flex-col gap-4 p-4">
-      <section>
-        <h3 className="mb-1.5 font-mono text-[0.8125rem] text-ink-2">译文</h3>
-        <p
-          className="text-[0.9375rem] leading-[1.7] whitespace-pre-wrap text-ink"
-          aria-live="polite"
-          aria-busy={streaming}
-        >
-          {translation}
-          {streaming && <span className="streaming-caret" aria-hidden="true" />}
-        </p>
-        {error && <p className="mt-2 text-[0.9375rem] text-seal">{error}</p>}
-      </section>
-      <HardWordGrid
-        words={hardWords}
-        context={picked.context}
-        contextFor={(hw) => sentenceContaining(picked.context, hw.surface)}
-        compact
-      />
-    </div>
-  )
-}
-
-/** 浮窗内容：单词 → 词卡；句子 → 流式译文 + 难词（可收藏，连同各自所在句）。 */
-export function SelectionPanel({ picked }: { picked: Picked }) {
-  return picked.isWord ? <WordPane picked={picked} /> : <SentencePane picked={picked} />
 }
