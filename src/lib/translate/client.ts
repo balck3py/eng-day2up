@@ -17,6 +17,7 @@ export async function streamTranslate(
   direction: Direction,
   onDelta: (delta: string) => void,
   onProvider?: (p: ProviderName | 'local' | null) => void,
+  signal?: AbortSignal,
 ): Promise<StreamOutcome> {
   const local = getLocalModelConfig()
   let provider: ProviderName | 'local' | null = null
@@ -25,7 +26,7 @@ export async function streamTranslate(
     if (local) {
       provider = 'local'
       onProvider?.(provider)
-      for await (const delta of streamLocalTranslate(text, direction, local)) onDelta(delta)
+      for await (const delta of streamLocalTranslate(text, direction, local, signal)) onDelta(delta)
       return { provider, error }
     }
 
@@ -33,6 +34,7 @@ export async function streamTranslate(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, direction }),
+      signal,
     })
     if (!res.ok || !res.body) {
       const data = (await res.json().catch(() => ({}))) as { error?: string }
@@ -63,6 +65,7 @@ export async function streamTranslate(
       }
     }
   } catch {
+    if (signal?.aborted) return { provider, error: null }
     error = local
       ? '本地模型调用失败，请检查设置里的 Base URL、跨域与混合内容限制。'
       : '网络错误，已保留收到的部分译文。'
