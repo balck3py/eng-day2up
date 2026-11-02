@@ -21,13 +21,20 @@ async function selectText(page: Page, selector: string, text?: string) {
   }, text)
 }
 
+async function setRate(page: Page, rate: number) {
+  const slider = page.getByRole('slider', { name: '播放速度' })
+  await slider.focus(); await slider.press('Home')
+  for (let i = 0; i < Math.round((rate - 0.5) / 0.05); i++) await slider.press('ArrowRight')
+  await expect(slider).toHaveValue(String(rate))
+}
+
 test.beforeEach(async ({ context, page }, testInfo) => {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url')
   const jwt = `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ sub: '00000000-0000-4000-8000-000000000001', aud: 'authenticated', role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })}.test`
   const session = { access_token: jwt, refresh_token: 'test-refresh', token_type: 'bearer', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, user: { id: '00000000-0000-4000-8000-000000000001', email: 'podcast-test@example.test' } }
   await context.addCookies([{ name: 'sb-127-auth-token', value: 'base64-' + encode(session), domain: 'localhost', path: '/' }])
-  await page.route('**/api/podcast', (route) => route.fulfill({ json: { episodes: [episode] } }))
-  await page.route('**/api/podcast/*', (route) => route.fulfill({ json: { episode, cues, englishError: null, chineseError: null } }))
+  await page.route('**/api/podcast/shows/*', (route) => route.fulfill({ json: { episodes: [episode] } }))
+  await page.route('**/api/podcast/shows/*/*', (route) => route.fulfill({ json: { episode, cues, englishError: null, chineseError: null } }))
   await page.route('**/api/word/*', (route) => route.fulfill({ json: { word: 'learning', matchedFrom: 'exact', phonetic: '/ˈlɜːnɪŋ/', senses: [{ pos: 'n.', meaning: '学习'.repeat(100) }] } }))
   await page.route('**/api/wordbook?*', (route) => route.fulfill({ json: { entries: [] } }))
   await page.route('**/api/wordbook', (route) => route.fulfill({ json: { entry: { id: 'test-favorite' } } }))
@@ -48,7 +55,7 @@ test.beforeEach(async ({ context, page }, testInfo) => {
     })
     HTMLMediaElement.prototype.play = async function () { state(this).paused = false; this.dispatchEvent(new Event('playing')) }
     HTMLMediaElement.prototype.pause = function () { state(this).paused = true; this.dispatchEvent(new Event('pause')) }
-    setInterval(() => document.querySelectorAll('audio').forEach((a) => { if (!state(a).paused) { state(a).time += 0.025; a.dispatchEvent(new Event('timeupdate')) } }), 25)
+    setInterval(() => document.querySelectorAll('audio').forEach((a) => { if (!state(a).paused) { state(a).time += 0.025 * a.playbackRate; a.dispatchEvent(new Event('timeupdate')) } }), 25)
   })
 })
 
@@ -56,6 +63,12 @@ test('catalog, navigation, direct detail, language toggle and mobile overflow', 
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto('/podcast')
   await expect(page.getByRole('heading', { name: '播客', exact: true })).toBeVisible()
+  await expect(page.locator('main li')).toHaveCount(4)
+  for (const card of await page.locator('main li a').all()) {
+    await expect(card).toHaveText('')
+    await expect(card.locator('img')).toHaveCount(1)
+  }
+  await page.getByRole('link', { name: 'Daily News 10 Mins', exact: true }).click()
   await page.getByRole('link', { name: episode.title }).click()
   await expect(page.getByText('这是第 0 句中文。')).toBeVisible()
   await page.getByLabel('显示中文').uncheck()
@@ -81,7 +94,7 @@ test('sentence bounds, continuous pause/click and Chinese hide preserve player',
   await page.getByLabel('显示中文').uncheck()
   await expect.poll(() => page.locator('audio').evaluate((a: HTMLAudioElement) => a.currentTime)).toBeGreaterThan(1.7)
   await expect(page.getByRole('button', { name: '暂停播客' })).toBeVisible()
-  await page.getByRole('link', { name: '← 播客列表' }).click()
+  await page.getByRole('link', { name: '← 剧集列表' }).click()
   await expect(page.locator('audio')).toHaveCount(0)
 })
 
@@ -122,11 +135,11 @@ test('reader automatically translates sentences with no dictionary controls', as
 
 test('catalog failure, retry, empty state and refresh show newly published episodes', async ({ page }) => {
   let phase = 0
-  await page.route('**/api/podcast', (route) => {
+  await page.route('**/api/podcast/shows/*', (route) => {
     return phase === 0 ? route.fulfill({ status: 502, json: { error: '节目加载失败' } })
       : route.fulfill({ json: { episodes: phase === 1 ? [] : [episode] } })
   })
-  await page.goto('/podcast')
+  await page.goto('/podcast/shows/daily-news')
   await expect(page.locator('main [role=alert]')).toContainText('节目加载失败')
   phase = 1
   await page.getByRole('button', { name: '重试', exact: true }).click()
@@ -137,15 +150,15 @@ test('catalog failure, retry, empty state and refresh show newly published episo
 })
 
 test('missing Chinese, audio failure and unknown episode are independent', async ({ page }) => {
-  await page.route('**/api/podcast/old', (route) => route.fulfill({ json: { episode: { ...episode, audio: null, chinese: null }, cues: cues.map((cue) => ({ ...cue, chineseText: undefined })), englishError: null, chineseError: '本期暂无中文字幕' } }))
+  await page.route('**/api/podcast/shows/daily-news/old', (route) => route.fulfill({ json: { episode: { ...episode, audio: null, chinese: null }, cues: cues.map((cue) => ({ ...cue, chineseText: undefined })), englishError: null, chineseError: '本期暂无中文字幕' } }))
   await page.goto('/podcast/old')
   await expect(page.getByLabel('显示中文')).toBeDisabled()
   await expect(page.locator('[data-selection-english]').first()).toBeVisible()
   await expect(page.getByText('本期音频不可用，可继续阅读字幕。')).toBeVisible()
-  await page.route('**/api/podcast/missing', (route) => route.fulfill({ status: 404, json: { error: '节目不存在' } }))
+  await page.route('**/api/podcast/shows/daily-news/missing', (route) => route.fulfill({ status: 404, json: { error: '节目不存在' } }))
   await page.goto('/podcast/missing')
   await expect(page.locator('main [role=alert]')).toContainText('节目不存在')
-  await expect(page.getByRole('link', { name: '← 播客列表' })).toBeVisible()
+  await expect(page.getByRole('link', { name: '← 剧集列表' })).toBeVisible()
 })
 
 test('new selection wins delayed results and scrolling during a request cannot reopen panel', async ({ page }) => {
@@ -195,12 +208,14 @@ test('real MP3 seeks, repeats sentences and continues after a paused continuous 
   const catalog = await loadCatalog()
   const latest = catalog.find((e) => e.english && e.chinese)!
   const detail = await loadEpisode(latest.id)
-  await page.route('**/api/podcast/live', (route) => route.fulfill({ json: detail }))
+  await page.route('**/api/podcast/shows/daily-news/live', (route) => route.fulfill({ json: detail }))
   await page.goto('/podcast/live')
   await expect(page.getByRole('heading', { name: latest.title })).toBeVisible()
   await page.locator('audio').evaluate((audio: HTMLAudioElement) => { audio.addEventListener('pause', () => { audio.dataset.pausedAt = String(audio.currentTime) }) })
   const short = detail.cues.filter((cue) => cue.endMs - cue.startMs < 3000)
-  for (const cue of [short[0], short[Math.floor(short.length / 2)]]) {
+  const timings = []
+  for (const [index, cue] of [short[0], short[Math.floor(short.length / 2)]].entries()) {
+    await setRate(page, index === 0 ? 0.5 : 1.2)
     const timestamp = `${Math.floor(cue.startMs / 60000)}:${String(Math.floor(cue.startMs / 1000) % 60).padStart(2, '0')}`
     const row = page.getByRole('button', { name: `播放字幕 ${timestamp}`, exact: true })
     await row.click()
@@ -210,17 +225,159 @@ test('real MP3 seeks, repeats sentences and continues after a paused continuous 
     expect(Math.abs(end - cue.endMs / 1000), `cue ${cue.id}: actual=${end}, expected=${cue.endMs / 1000}`).toBeLessThanOrEqual(0.15)
     const actualPauseTime = Number(await page.locator('audio').getAttribute('data-paused-at'))
     expect(actualPauseTime - cue.endMs / 1000).toBeLessThanOrEqual(0.15)
+    timings.push({ rate: index === 0 ? 0.5 : 1.2, cue: cue.id, endMs: cue.endMs, pausedAtMs: actualPauseTime * 1000, errorMs: actualPauseTime * 1000 - cue.endMs })
     await row.click()
     await expect(page.getByRole('button', { name: '暂停播客' })).toBeVisible()
     await page.getByRole('button', { name: '暂停播客' }).click()
   }
   await page.getByRole('button', { name: '从头播放' }).click()
   await page.getByRole('button', { name: '暂停播客' }).click()
-  const first = page.getByRole('button', { name: '播放字幕 0:00', exact: true })
+  const first = page.locator('ol[aria-label="节目字幕"] [role="button"]').first()
   await first.locator('p[lang="zh-CN"]').click()
   await page.getByLabel('显示中文').uncheck()
   await expect.poll(() => page.locator('audio').evaluate((a: HTMLAudioElement) => a.currentTime), { timeout: 15_000 }).toBeGreaterThan(detail.cues[0].endMs / 1000 + 0.2)
   await expect(page.getByLabel('播放模式')).toHaveValue('continuous')
   await expect(page.getByRole('button', { name: '暂停播客' })).toBeVisible()
+  await testInfo.attach('media-timing.json', { body: JSON.stringify(timings, null, 2), contentType: 'application/json' })
+  console.log(`${testInfo.project.name} real MP3 timings: ${JSON.stringify(timings)}`)
   await page.screenshot({ path: testInfo.outputPath('live-podcast.png') })
+})
+
+test('four programs have separate lists, entire episode card is a link, old links redirect', async ({ page }, info) => {
+  await page.goto('/podcast')
+  await expect(page.locator('main li')).toHaveCount(4)
+  await page.screenshot({ path: info.outputPath('programs.png') })
+  for (const [id, name] of [['daily-news', 'Daily News 10 Mins'], ['ai-digest', 'AI Digest'], ['topic', 'Talk Today'], ['deep-dive', 'How It Works']]) {
+    await page.getByRole('link', { name, exact: true }).click()
+    await expect(page).toHaveURL(new RegExp(`/podcast/shows/${id}$`))
+    const card = page.getByRole('link', { name: new RegExp(episode.title) })
+    await expect(card.locator('time')).toBeVisible()
+    await expect(card).toHaveAttribute('href', `/podcast/shows/${id}/episode-one`)
+    await card.locator('time').click()
+    await expect(page.getByRole('heading', { name: episode.title })).toBeVisible()
+    await page.getByRole('link', { name: '← 剧集列表' }).click()
+    await page.getByRole('link', { name: '← 所有节目' }).click()
+    await expect(page).toHaveURL(/\/podcast$/)
+  }
+  await page.goto('/podcast/episode-one')
+  await expect(page).toHaveURL(/\/podcast\/shows\/daily-news\/episode-one$/)
+})
+
+test('speed persists, folding only leaves arrow and preserves audio and Chinese preference', async ({ page }, info) => {
+  await page.goto('/podcast/episode-one')
+  await expect(page.getByRole('slider')).toBeVisible()
+  await setRate(page, 0.8)
+  expect(await page.locator('audio').evaluate((a: HTMLAudioElement) => a.playbackRate)).toBe(0.8)
+  expect(await page.locator('audio').evaluate((a: HTMLAudioElement) => a.paused)).toBe(true)
+  await page.getByLabel('显示中文').uncheck()
+  await page.getByRole('button', { name: '从头播放' }).click()
+  const instance = await page.locator('audio').elementHandle()
+  await page.getByRole('button', { name: '折叠播放器' }).click()
+  await expect(page.locator('[data-player-dock] button')).toHaveCount(1)
+  await expect(page.getByRole('slider')).toHaveCount(0)
+  await page.screenshot({ path: info.outputPath('folded.png') })
+  expect(await instance!.evaluate((a: HTMLAudioElement) => a.isConnected && !a.paused)).toBe(true)
+  await page.getByRole('button', { name: '展开播放器' }).click()
+  await expect(page.getByRole('slider')).toHaveValue('0.8')
+  await expect(page.getByLabel('显示中文')).not.toBeChecked()
+  await expect(page.getByLabel('播放模式')).toHaveValue('continuous')
+  await page.reload()
+  await expect(page.getByRole('slider')).toHaveValue('0.8')
+  expect(await page.locator('audio').evaluate((a: HTMLAudioElement) => a.paused)).toBe(true)
+  await page.getByRole('button', { name: '恢复正常速度' }).click()
+  await expect(page.getByRole('slider')).toHaveValue('1')
+})
+
+test('narrow program grid and long episode cards retain native link interactions and artwork fallback', async ({ page }, info) => {
+  await page.setViewportSize({ width: 320, height: 568 })
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+  await page.goto('/podcast')
+  const programs = page.locator('main li')
+  const a = await programs.nth(0).boundingBox(), b = await programs.nth(1).boundingBox()
+  expect(a!.x).toBe(b!.x)
+  expect(b!.y).toBeGreaterThan(a!.y + a!.height)
+  await page.getByRole('link', { name: 'Daily News 10 Mins', exact: true }).focus()
+  await page.screenshot({ path: info.outputPath('programs-320-dark-focus.png'), fullPage: true })
+  const longTitle = 'A long episode title about language, science and technology that wraps on small screens'
+  await page.route('**/_next/image?*', (route) => {
+    const src = new URL(route.request().url()).searchParams.get('url')
+    if (src === base + 'broken.jpg') return route.fulfill({ status: 404 })
+    if (src === base + 'fallback.jpg') return route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80"><rect width="80" height="80" fill="#5C6A87"/></svg>' })
+    return route.continue()
+  })
+  await page.route('**/api/podcast/shows/daily-news', (route) => route.fulfill({ json: { episodes: [{ ...episode, title: longTitle, image: base + 'broken.jpg', channelImage: base + 'fallback.jpg' }] } }))
+  await page.keyboard.press('Enter')
+  const card = page.getByRole('link', { name: new RegExp(longTitle) })
+  await expect.poll(() => card.locator('img').evaluate((image: HTMLImageElement) => new URL(image.src).searchParams.get('url'))).toBe(base + 'fallback.jpg')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320)
+  await card.focus()
+  await page.screenshot({ path: info.outputPath('episodes-320-long-title.png'), fullPage: true })
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('heading', { name: episode.title })).toBeVisible()
+  await page.getByRole('link', { name: '← 剧集列表' }).click()
+  await card.locator('img').click()
+  await expect(page.getByRole('heading', { name: episode.title })).toBeVisible()
+  await page.getByRole('link', { name: '← 剧集列表' }).click()
+  const bounds = await card.boundingBox()
+  await card.click({ position: { x: bounds!.width - 6, y: bounds!.height - 6 } })
+  await expect(page.getByRole('heading', { name: episode.title })).toBeVisible()
+  await page.getByRole('link', { name: '← 剧集列表' }).click()
+  // Use the anchor's native new-tab behavior without intercepting navigation.
+  await card.evaluate((element) => { element.setAttribute('target', '_blank') })
+  const popup = page.waitForEvent('popup')
+  await card.click()
+  const otherTab = await popup
+  await expect(otherTab).toHaveURL(/\/podcast\/shows\/daily-news\/episode-one$/)
+  await otherTab.close()
+})
+
+test('dock and translation stay independent, last cue remains reachable and narrow layouts fit', async ({ page }, info) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/podcast/episode-one')
+  await expect(page.locator('[data-selection-english]').first()).toBeVisible()
+  await selectText(page, '[data-selection-english]', 'learning')
+  await expect(page.getByRole('dialog')).toBeVisible()
+  await page.getByRole('button', { name: '折叠播放器' }).click()
+  await expect(page.getByRole('dialog')).toBeVisible()
+  await page.getByRole('button', { name: '展开播放器' }).click()
+  await expect(page.getByRole('dialog')).toBeVisible()
+  await setRate(page, 1.2)
+  await expect(page.getByRole('dialog')).toBeVisible()
+  await page.screenshot({ path: info.outputPath('dock-and-translation.png') })
+  await page.locator('[data-selection-english]').last().scrollIntoViewIfNeeded()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  const bounds = await page.locator('[data-selection-english]').last().boundingBox()
+  const dock = await page.locator('[data-player-dock]').boundingBox()
+  expect(bounds!.y + bounds!.height).toBeLessThan(dock!.y)
+  await page.getByRole('button', { name: '折叠播放器' }).click()
+  await page.getByRole('button', { name: '展开播放器' }).click()
+  await page.setViewportSize({ width: 320, height: 568 })
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+  await page.evaluate(() => { document.documentElement.style.fontSize = '20px' })
+  await expect(page.locator('[data-selection-english]').first()).toHaveCSS('color', 'rgb(232, 236, 243)')
+  await expect(page.locator('ol[aria-label="节目字幕"] [role="button"]').first()).toHaveCSS('transition-property', 'none')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320)
+  await page.screenshot({ path: info.outputPath('dock-dark-large-text.png') })
+})
+
+test('real library renders the four feeds and their episode details', async ({ page }, info) => {
+  test.skip(process.env.PODCAST_LIVE_TEST !== '1', 'Opt-in network library screenshots')
+  test.setTimeout(60_000)
+  const { PROGRAMS, programPath } = await import('../src/lib/podcast/programs')
+  const { loadCatalog, loadEpisode } = await import('../src/lib/podcast/load')
+  await page.goto('/podcast')
+  await page.screenshot({ path: info.outputPath('real-programs.png') })
+  for (const program of PROGRAMS) {
+    const episodes = await loadCatalog(program)
+    const detail = await loadEpisode(episodes[0].id, program)
+    await page.route(`**/api/podcast/shows/${program.id}`, (route) => route.fulfill({ json: { episodes } }))
+    await page.route(`**/api/podcast/shows/${program.id}/${detail.episode.id}`, (route) => route.fulfill({ json: detail }))
+    await page.goto(programPath(program.id))
+    await expect(page.getByRole('heading', { name: program.name, exact: true })).toBeVisible()
+    await page.screenshot({ path: info.outputPath(`real-${program.id}-episodes.png`) })
+    await page.getByRole('link', { name: new RegExp(detail.episode.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) }).first().click()
+    await expect(page.getByRole('heading', { name: detail.episode.title, exact: true })).toBeVisible()
+    await expect(page.locator('[data-selection-english]').first()).toBeVisible()
+    await page.screenshot({ path: info.outputPath(`real-${program.id}-detail.png`) })
+  }
 })

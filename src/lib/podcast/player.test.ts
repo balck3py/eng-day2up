@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { PodcastPlayer } from './player'
 import { SubtitleGesture } from './gesture'
 class Media extends EventTarget {
+  playbackRate = 1
   currentTime = 0
   duration = 20
   readyState = 1
@@ -91,4 +92,29 @@ it('suppresses long presses, selection, drag and synthetic clicks', () => {
   g.start(0, 0, false); g.move(20, 0); expect(g.allowClick(false)).toBe(false)
   g.start(0, 0, false); g.block(); expect(g.allowClick(false)).toBe(false)
   expect(g.allowClick(false)).toBe(false)
+})
+
+it.each([0.5, 1, 1.2])('keeps SRT boundaries at %sx and preserves rate on replay', async (rate) => {
+  player.setRate(rate); player.select(cues[0]); await Promise.resolve()
+  expect(audio.playbackRate).toBe(rate)
+  tick(1.9); expect(audio.paused).toBe(false)
+  player.setRate(0.8)
+  expect(audio.currentTime).toBe(1.9)
+  tick(2.02); expect(audio.paused).toBe(true)
+  player.select(cues[0]); expect(audio.playbackRate).toBe(0.8)
+  player.fromStart(); expect(audio.playbackRate).toBe(0.8)
+  player.pause(); const plays = audio.play.mock.calls.length
+  player.setRate(rate); expect(audio.play.mock.calls).toHaveLength(plays)
+  expect(audio.paused).toBe(true)
+})
+
+it('reasserts the chosen rate when native loading resets media speed', () => {
+  player.setRate(0.8)
+  audio.playbackRate = 1
+  audio.dispatchEvent(new Event('ratechange'))
+  expect(audio.playbackRate).toBe(0.8)
+  audio.playbackRate = 1
+  audio.dispatchEvent(new Event('loadedmetadata'))
+  expect(audio.playbackRate).toBe(0.8)
+  expect(player.snapshot().rate).toBe(0.8)
 })

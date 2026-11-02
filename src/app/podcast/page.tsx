@@ -1,3 +1,2 @@
-import { PodcastCatalog } from '@/components/podcast/PodcastCatalog'
-
-export default function PodcastPage() { return <PodcastCatalog /> }
+import { PodcastPrograms } from '@/components/podcast/PodcastPrograms'
+export default function PodcastPage() { return <PodcastPrograms /> }

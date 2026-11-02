@@ -28,3 +28,18 @@ describe('podcast RSS', () => {
   })
   it.each(['http://qiniu.aiquannei.com/podcast/daily-news/a', 'https://evil.test/a', 'https://qiniu.aiquannei.com/podcast/daily-news/%2e%2e/a', 'https://u@qiniu.aiquannei.com/podcast/daily-news/a', 'https://qiniu.aiquannei.com:8443/podcast/daily-news/a'])('rejects untrusted resource %s', (url) => expect(resourceUrl(url)).toBeNull())
 })
+
+import { PROGRAMS } from './programs'
+it('keeps each program directory isolated and preserves GUID-based Daily News IDs', () => {
+  const ids = PROGRAMS.map((program) => {
+    const content = rss(item(`<podcast:transcript url="https://qiniu.aiquannei.com${program.directory}a.srt" type="application/x-subrip" language="en"/>`).replaceAll(base, `https://qiniu.aiquannei.com${program.directory}`))
+    const parsed = parseFeed(content, program)[0]
+    expect(parsed.audio).toContain(program.directory)
+    expect(parsed.english).toContain(program.directory)
+    expect(parsed.chinese).toBeNull()
+    for (const other of PROGRAMS.filter((p) => p.id !== program.id)) expect(resourceUrl(`https://qiniu.aiquannei.com${other.directory}a.mp3`, program)).toBeNull()
+    return parsed.id
+  })
+  expect(new Set(ids).size).toBe(1) // The URL's program context, not a changed GUID hash, scopes identity.
+  expect(ids[0]).toBe(parseFeed(rss(item()))[0].id)
+})

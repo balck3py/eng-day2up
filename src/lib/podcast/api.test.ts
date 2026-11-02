@@ -33,3 +33,20 @@ it('returns 404 for unknown IDs and a retryable failure for upstream errors', as
   catalog.mockRejectedValue(new Error('upstream'))
   expect((await list()).status).toBe(502)
 })
+
+import { GET as programList } from '@/app/api/podcast/shows/[programId]/route'
+import { GET as programDetail } from '@/app/api/podcast/shows/[programId]/[episodeId]/route'
+import { PROGRAMS } from './programs'
+it('scopes new routes to registered programs and rejects unknown programs after auth', async () => {
+  const request = new Request('http://x')
+  catalog.mockResolvedValue([]); episode.mockResolvedValue({ cues: [] })
+  for (const program of PROGRAMS) {
+    expect((await programList(request, { params: Promise.resolve({ programId: program.id }) })).status).toBe(200)
+    expect(catalog).toHaveBeenLastCalledWith(program)
+    expect((await programDetail(request, { params: Promise.resolve({ programId: program.id, episodeId: 'same' }) })).status).toBe(200)
+    expect(episode).toHaveBeenLastCalledWith('same', program)
+  }
+  expect((await programList(request, { params: Promise.resolve({ programId: 'unknown' }) })).status).toBe(404)
+  getUser.mockResolvedValue({ data: { user: null } })
+  expect((await programList(request, { params: Promise.resolve({ programId: 'unknown' }) })).status).toBe(401)
+})

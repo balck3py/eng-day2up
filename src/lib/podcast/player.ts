@@ -1,9 +1,11 @@
 import { cueAt } from './srt'
 import type { Cue } from './types'
+import { normalizeRate, savedRate, saveRate } from './rate'
 
 export type PlaybackMode = 'sentence' | 'continuous'
 export interface PlayerState {
   mode: PlaybackMode
+  rate: number
   status: 'idle' | 'loading' | 'playing' | 'paused' | 'ended' | 'error'
   time: number
   duration: number
@@ -13,7 +15,7 @@ export interface PlayerState {
 
 /** One controller owns one media element; presentation changes never replace it. */
 export class PodcastPlayer {
-  private state: PlayerState = { mode: 'sentence', status: 'idle', time: 0, duration: 0, activeId: null, error: null }
+  private state: PlayerState = { mode: 'sentence', rate: 1, status: 'idle', time: 0, duration: 0, activeId: null, error: null }
   private listeners = new Set<() => void>()
   private generation = 0
   private target: Cue | undefined
@@ -24,8 +26,11 @@ export class PodcastPlayer {
   private handlers: Record<string, () => void>
 
   constructor(private audio: HTMLAudioElement, private cues: Cue[]) {
+    this.state = { ...this.state, rate: savedRate() }
+    this.applyRate()
     this.handlers = {
-      loadedmetadata: () => { this.applySeek(); this.tick() },
+      loadedmetadata: () => { this.applyRate(); this.applySeek(); this.tick() },
+      ratechange: () => this.applyRate(),
       durationchange: () => this.tick(),
       timeupdate: () => this.tick(),
       seeked: () => this.tick(),
@@ -53,6 +58,16 @@ export class PodcastPlayer {
     if (Object.keys(next).every((key) => next[key as keyof PlayerState] === this.state[key as keyof PlayerState])) return
     this.state = next
     this.listeners.forEach((listener) => listener())
+  }
+  private applyRate() {
+    if (this.audio.playbackRate !== this.state.rate) this.audio.playbackRate = this.state.rate
+    if ('preservesPitch' in this.audio) this.audio.preservesPitch = true
+  }
+  setRate(value: number) {
+    const rate = normalizeRate(value)
+    this.patch({ rate })
+    this.applyRate()
+    saveRate(rate)
   }
   private applySeek() {
     if (this.pendingSeek === null || this.audio.readyState === 0) return
@@ -85,6 +100,7 @@ export class PodcastPlayer {
       this.pendingSeek ??= this.state.mode === 'sentence' && this.target ? this.target.startMs / 1000 : this.audio.currentTime
       this.audio.load()
     }
+    this.applyRate()
     this.applySeek()
     if (!this.wantsPlay) return
     // Call in the user gesture, even before metadata, to retain mobile playback permission.

@@ -1,17 +1,18 @@
-import { FEED_URL, parseFeed, resourceUrl } from './feed'
+import { parseFeed, resourceUrl } from './feed'
 import { parseSrt, pairCues } from './srt'
 import type { Episode, EpisodeDetail } from './types'
+import { PROGRAMS, type Program } from './programs'
 
 export class PodcastError extends Error {
   constructor(message: string, readonly status = 502) { super(message) }
 }
 
-export async function fetchPodcastText(input: string): Promise<string> {
+export async function fetchPodcastText(input: string, program: Program = PROGRAMS[0]): Promise<string> {
   let url = new URL(input)
   const signal = AbortSignal.timeout(10_000)
   try {
     for (let hop = 0; ; hop++) {
-      if (!resourceUrl(url.href)) throw new PodcastError('节目资源地址不受支持')
+      if (!resourceUrl(url.href, program)) throw new PodcastError('节目资源地址不受支持')
       const res = await fetch(url, {
         redirect: 'manual', cache: 'no-store', signal,
         headers: { Accept: 'application/rss+xml, application/xml, text/plain;q=0.9', 'Cache-Control': 'no-cache' },
@@ -49,19 +50,19 @@ export async function fetchPodcastText(input: string): Promise<string> {
   }
 }
 
-export async function loadCatalog(): Promise<Episode[]> {
-  const url = new URL(FEED_URL)
+export async function loadCatalog(program: Program = PROGRAMS[0]): Promise<Episode[]> {
+  const url = new URL(program.feed)
   url.searchParams.set('_refresh', String(Date.now()))
-  return parseFeed(await fetchPodcastText(url.href))
+  return parseFeed(await fetchPodcastText(url.href, program), program)
 }
 
-export async function loadEpisode(id: string): Promise<EpisodeDetail> {
-  const episode = (await loadCatalog()).find((e) => e.id === id)
+export async function loadEpisode(id: string, program: Program = PROGRAMS[0]): Promise<EpisodeDetail> {
+  const episode = (await loadCatalog(program)).find((e) => e.id === id)
   if (!episode) throw new PodcastError('节目不存在', 404)
   async function track(url: string | null, language: string) {
     if (!url) return { cues: [], error: `本期暂无${language}字幕` }
     try {
-      const cues = parseSrt(await fetchPodcastText(url))
+      const cues = parseSrt(await fetchPodcastText(url, program))
       return { cues, error: cues.length ? null : `${language}字幕没有有效时间段` }
     } catch { return { cues: [], error: `${language}字幕加载失败，请重试` } }
   }

@@ -17,3 +17,17 @@ it.skipIf(process.env.PODCAST_LIVE_TEST !== '1')('loads the real feed twice and 
   expect(res.status).toBe(206)
   await res.body?.cancel()
 }, 30_000)
+
+import { PROGRAMS } from './programs'
+it.skipIf(process.env.PODCAST_LIVE_TEST !== '1')('loads each registered feed in its own program context', async () => {
+  for (const program of PROGRAMS) {
+    const catalog = await loadCatalog(program)
+    expect(catalog.length).toBeGreaterThan(0)
+    const detail = await loadEpisode(catalog[0].id, program)
+    expect(detail.episode.audio).toContain(program.directory)
+    expect(detail.englishError).toBeNull()
+    expect(detail.cues.length).toBeGreaterThan(0)
+    if (!detail.episode.chinese) expect(detail.chineseError).toContain('暂无')
+    else expect(detail.cues.some((cue) => !!cue.chineseText)).toBe(true)
+  }
+}, 60_000)
