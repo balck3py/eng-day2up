@@ -49,8 +49,8 @@ export function PlayerDock({ controller, hasCues, hasAudio, hasChinese, showChin
       </div>
       <div className="flex min-h-11 items-center gap-3 border-t border-rule pt-2 text-xs text-ink-3">
         <label htmlFor={`${id}-rate`} className="shrink-0">速度</label>
-        <input id={`${id}-rate`} aria-label="播放速度" aria-valuetext={`${state.rate.toFixed(2)} 倍`} type="range" min="0.5" max="1.2" step="0.05" value={state.rate} onChange={(e) => controller.setRate(Number(e.target.value))} className="h-11 min-w-0 flex-1 accent-ink" />
-        <output htmlFor={`${id}-rate`} className="w-11 text-right text-sm tabular-nums text-ink">{state.rate.toFixed(2)}×</output>
+        <input id={`${id}-rate`} aria-label="播放速度" aria-valuetext={`${state.rate.toFixed(1)} 倍`} type="range" min="0.5" max="1.2" step="0.1" value={state.rate} onChange={(e) => controller.setRate(Number(e.target.value))} className="h-11 min-w-0 flex-1 accent-ink" />
+        <output htmlFor={`${id}-rate`} className="w-11 text-right text-sm tabular-nums text-ink">{state.rate.toFixed(1)}×</output>
         <button type="button" aria-label="恢复正常速度" onClick={() => controller.setRate(1)} className="min-h-11 shrink-0 rounded-lg px-1 hover:bg-paper">重置</button>
       </div>
       {state.error && <p role="alert" className="mt-2 text-xs text-seal">{state.error} <button type="button" onClick={() => controller.toggle()} className="min-h-11 underline">重试播放</button></p>}

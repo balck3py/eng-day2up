@@ -88,7 +88,7 @@ Next 内容哈希 JS/CSS/字体继续使用框架的一年 immutable 缓存。�
 ┌────────────────────────────────────┐
 │ 单句 / 连续    [播放/暂停]  从头   ⌄ │
 │ 01:23 / 06:50            ☑ 显示中文 │
-│ 速度 0.50× ─────●──── 1.20×  0.85× │
+│ 速度 0.5× ─────●──── 1.2×  0.8× │
 │                         恢复 1.0× │
 └────────────────────────────────────┘
 折叠后：                           [⌃]
@@ -102,7 +102,7 @@ aria-expanded/aria-controls、箭头可读名称、slider 名称和值、可见�
 
 ### 5. 倍速与媒体时钟
 
-给 PlayerState 加 rate，controller 提供 setRate；range min=0.5、max=1.2、step=0.05，文本显示两位小数（1.00×）。对输入做有限数检查、边界限制及步长归一；值非法回退 1.0。设置 HTMLAudioElement.playbackRate，浏览器支持时启用 preservesPitch。维护 ratechange 与当前状态一致，加载/错误重试重申 rate，避免 media.load 导致速度回到默认。
+给 PlayerState 加 rate，controller 提供 setRate；range min=0.5、max=1.2、step=0.1，文本显示一位小数（1.0×）。对输入做有限数检查、边界限制及步长归一；值非法回退 1.0。设置 HTMLAudioElement.playbackRate，浏览器支持时启用 preservesPitch。维护 ratechange 与当前状态一致，加载/错误重试重申 rate，避免 media.load 导致速度回到默认。
 
 使用浏览器本地偏好键记录速度，读取失败、旧值非法或越界则 1.0；首次挂载后再读取，避免 SSR 访问 localStorage。只保存速度，不保存进度。默认折叠和偏好持久化是本提案采用的产品默认值，可在实施前调整。
 

@@ -1,6 +1,6 @@
 export const RATE_KEY = 'podcastPlaybackRate'
 export function normalizeRate(value: number): number {
-  return Number.isFinite(value) ? Math.round(Math.min(1.2, Math.max(0.5, value)) * 20) / 20 : 1
+  return Number.isFinite(value) ? Math.round(Math.min(1.2, Math.max(0.5, value)) * 10) / 10 : 1
 }
 export function savedRate(): number {
   try {
