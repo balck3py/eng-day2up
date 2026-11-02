@@ -28,6 +28,10 @@ async function setRate(page: Page, rate: number) {
   await expect(slider).toHaveValue(String(rate))
 }
 
+async function expandPlayer(page: Page) {
+  await page.getByRole('button', { name: '展开播放器' }).click()
+}
+
 test.beforeEach(async ({ context, page }, testInfo) => {
   const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString('base64url')
   const jwt = `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ sub: '00000000-0000-4000-8000-000000000001', aud: 'authenticated', role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })}.test`
@@ -71,6 +75,7 @@ test('catalog, navigation, direct detail, language toggle and mobile overflow', 
   await page.getByRole('link', { name: 'Daily News 10 Mins', exact: true }).click()
   await page.getByRole('link', { name: episode.title }).click()
   await expect(page.getByText('这是第 0 句中文。')).toBeVisible()
+  await expandPlayer(page)
   await page.getByLabel('显示中文').uncheck()
   await expect(page.getByText('这是第 0 句中文。')).toHaveCount(0)
   await expect(page.locator('[data-selection-english]').first()).toBeVisible()
@@ -87,6 +92,7 @@ test('sentence bounds, continuous pause/click and Chinese hide preserve player',
   await expect.poll(() => page.locator('audio').evaluate((a: HTMLAudioElement) => a.paused)).toBe(true)
   const end = await page.locator('audio').evaluate((a: HTMLAudioElement) => a.currentTime)
   expect(end).toBeGreaterThanOrEqual(1.5); expect(end).toBeLessThan(1.65)
+  await expandPlayer(page)
   await page.getByRole('button', { name: '从头播放' }).click()
   await page.getByRole('button', { name: '暂停播客' }).click()
   await first.getByText('这是第 0 句中文。').click()
@@ -152,6 +158,7 @@ test('catalog failure, retry, empty state and refresh show newly published episo
 test('missing Chinese, audio failure and unknown episode are independent', async ({ page }) => {
   await page.route('**/api/podcast/shows/daily-news/old', (route) => route.fulfill({ json: { episode: { ...episode, audio: null, chinese: null }, cues: cues.map((cue) => ({ ...cue, chineseText: undefined })), englishError: null, chineseError: '本期暂无中文字幕' } }))
   await page.goto('/podcast/old')
+  await expandPlayer(page)
   await expect(page.getByLabel('显示中文')).toBeDisabled()
   await expect(page.locator('[data-selection-english]').first()).toBeVisible()
   await expect(page.getByText('本期音频不可用，可继续阅读字幕。')).toBeVisible()
@@ -211,6 +218,7 @@ test('real MP3 seeks, repeats sentences and continues after a paused continuous 
   await page.route('**/api/podcast/shows/daily-news/live', (route) => route.fulfill({ json: detail }))
   await page.goto('/podcast/live')
   await expect(page.getByRole('heading', { name: latest.title })).toBeVisible()
+  await expandPlayer(page)
   await page.locator('audio').evaluate((audio: HTMLAudioElement) => { audio.addEventListener('pause', () => { audio.dataset.pausedAt = String(audio.currentTime) }) })
   const short = detail.cues.filter((cue) => cue.endMs - cue.startMs < 3000)
   const timings = []
@@ -263,8 +271,12 @@ test('four programs have separate lists, entire episode card is a link, old link
   await expect(page).toHaveURL(/\/podcast\/shows\/daily-news\/episode-one$/)
 })
 
-test('speed persists, folding only leaves arrow and preserves audio and Chinese preference', async ({ page }, info) => {
+test('dock starts folded, speed persists and folding preserves audio and Chinese preference', async ({ page }, info) => {
   await page.goto('/podcast/episode-one')
+  await expect(page.getByRole('button', { name: '展开播放器' })).toHaveAttribute('aria-expanded', 'false')
+  await expect(page.locator('[data-player-dock] button')).toHaveCount(1)
+  await expect(page.getByRole('slider')).toHaveCount(0)
+  await expandPlayer(page)
   await expect(page.getByRole('slider')).toBeVisible()
   await setRate(page, 0.8)
   expect(await page.locator('audio').evaluate((a: HTMLAudioElement) => a.playbackRate)).toBe(0.8)
@@ -282,10 +294,16 @@ test('speed persists, folding only leaves arrow and preserves audio and Chinese 
   await expect(page.getByLabel('显示中文')).not.toBeChecked()
   await expect(page.getByLabel('播放模式')).toHaveValue('continuous')
   await page.reload()
+  await expect(page.getByRole('button', { name: '展开播放器' })).toBeVisible()
+  await expect(page.getByRole('slider')).toHaveCount(0)
+  await expandPlayer(page)
   await expect(page.getByRole('slider')).toHaveValue('0.8')
   expect(await page.locator('audio').evaluate((a: HTMLAudioElement) => a.paused)).toBe(true)
   await page.getByRole('button', { name: '恢复正常速度' }).click()
   await expect(page.getByRole('slider')).toHaveValue('1')
+  await page.goto('/podcast/shows/ai-digest/episode-one')
+  await expect(page.getByRole('button', { name: '展开播放器' })).toBeVisible()
+  await expect(page.getByRole('slider')).toHaveCount(0)
 })
 
 test('narrow program grid and long episode cards retain native link interactions and artwork fallback', async ({ page }, info) => {
@@ -336,6 +354,8 @@ test('dock and translation stay independent, last cue remains reachable and narr
   await page.goto('/podcast/episode-one')
   await expect(page.locator('[data-selection-english]').first()).toBeVisible()
   await selectText(page, '[data-selection-english]', 'learning')
+  await expect(page.getByRole('dialog')).toBeVisible()
+  await expandPlayer(page)
   await expect(page.getByRole('dialog')).toBeVisible()
   await page.getByRole('button', { name: '折叠播放器' }).click()
   await expect(page.getByRole('dialog')).toBeVisible()
