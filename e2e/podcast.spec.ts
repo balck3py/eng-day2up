@@ -24,7 +24,7 @@ async function selectText(page: Page, selector: string, text?: string) {
 async function setRate(page: Page, rate: number) {
   const slider = page.getByRole('slider', { name: '播放速度' })
   await slider.focus(); await slider.press('Home')
-  for (let i = 0; i < Math.round((rate - 0.5) / 0.05); i++) await slider.press('ArrowRight')
+  for (let i = 0; i < Math.round((rate - 0.5) / 0.1); i++) await slider.press('ArrowRight')
   await expect(slider).toHaveValue(String(rate))
 }
 
@@ -278,6 +278,11 @@ test('dock starts folded, speed persists and folding preserves audio and Chinese
   await expect(page.getByRole('slider')).toHaveCount(0)
   await expandPlayer(page)
   await expect(page.getByRole('slider')).toBeVisible()
+  await page.getByRole('slider').press('Home')
+  await expect(page.getByRole('slider')).toHaveValue('0.5')
+  await page.getByRole('slider').press('ArrowRight')
+  await expect(page.getByRole('slider')).toHaveValue('0.6')
+  await expect(page.getByRole('slider')).toHaveAttribute('aria-valuetext', '0.6 倍')
   await setRate(page, 0.8)
   expect(await page.locator('audio').evaluate((a: HTMLAudioElement) => a.playbackRate)).toBe(0.8)
   expect(await page.locator('audio').evaluate((a: HTMLAudioElement) => a.paused)).toBe(true)
