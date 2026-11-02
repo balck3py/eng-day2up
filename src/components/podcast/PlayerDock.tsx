@@ -13,7 +13,7 @@ export function PlayerDock({ controller, hasCues, hasAudio, hasChinese, showChin
   onChineseChange: (show: boolean) => void; onHeight: (height: number) => void
 }) {
   const state = useSyncExternalStore(controller.subscribe, controller.snapshot, controller.snapshot)
-  const [expanded, setExpanded] = useState(true)
+  const [expanded, setExpanded] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
   const foldRef = useRef<HTMLButtonElement>(null)
   const expandRef = useRef<HTMLButtonElement>(null)
