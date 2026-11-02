@@ -35,13 +35,15 @@ export function ReaderSelection({ children }: { children: React.ReactNode }) {
       lastRange = range.cloneRange(); lastText = picked.text
       setOpen({ picked, key: ++sequence })
     }
+    const inDock = (node: EventTarget | Node | null) => node instanceof Element ? !!node.closest('[data-player-dock]') : node instanceof Node ? !!node.parentElement?.closest('[data-player-dock]') : false
     function selectionChange() {
-      if (panelInteraction || inPanel(window.getSelection()?.anchorNode ?? null)) return
+      if (panelInteraction || inDock(window.getSelection()?.anchorNode ?? null) || inPanel(window.getSelection()?.anchorNode ?? null)) return
       clearTimeout(timer)
       if (window.getSelection()?.isCollapsed) { lastRange = null; lastText = '' }
       timer = setTimeout(evaluate, 250)
     }
     function pointerDown(e: PointerEvent) {
+      if (inDock(e.target)) { panelInteraction = true; return }
       panelInteraction = inPanel(e.target)
       if (panelInteraction) return
       close()
@@ -52,10 +54,10 @@ export function ReaderSelection({ children }: { children: React.ReactNode }) {
       // Keep panel-origin selectioncollapse events isolated through this gesture.
       if (!panelInteraction) selectionChange()
     }
-    function scroll(e: Event) { if (!inPanel(e.target)) close() }
+    function scroll(e: Event) { if (!inPanel(e.target) && !inDock(e.target)) close() }
     function keyDown(e: KeyboardEvent) {
       if (e.key === 'Escape') { close(); return }
-      if (inPanel(e.target)) { panelInteraction = true; return }
+      if (inPanel(e.target) || inDock(e.target)) { panelInteraction = true; return }
       if (e.shiftKey && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) {
         panelInteraction = false; dismissed = false; lastRange = null
       }

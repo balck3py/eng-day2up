@@ -45,3 +45,11 @@ describe('bounded fixed-source requests', () => {
     await expect(loadEpisode('missing')).rejects.toMatchObject({ status: 404 })
   })
 })
+
+import { PROGRAMS } from './programs'
+it('rejects redirects to another registered program directory', async () => {
+  const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 302, headers: { location: PROGRAMS[0].feed } }))
+  vi.stubGlobal('fetch', fetcher)
+  await expect(fetchPodcastText(PROGRAMS[1].feed, PROGRAMS[1])).rejects.toThrow('地址')
+  expect(fetcher).toHaveBeenCalledTimes(1)
+})
