@@ -79,8 +79,12 @@ test('podcast words always go directly to AI in device mode and return to dictio
     if (request.url().includes('/api/translate/config') && request.method() === 'POST') authorizations++
   })
   await page.route('**/api/podcast/shows/daily-news/device-word', (route) => route.fulfill({ json: {
-    episode: { id: 'device-word', title: 'Device word test', publishedAt: null, image: null, channelImage: null, audio: null, english: null, chinese: null },
+    episode: { id: 'device-word', title: 'Device word test', publishedAt: null, image: null, channelImage: null, audio: null, english: null, chinese: null, englishWords: 'https://qiniu.aiquannei.com/podcast/daily-news/device-word.en.words.srt' },
     cues: [{ id: '0', startMs: 0, endMs: 1000, text: 'Hello Helo' }], englishError: null, chineseError: null,
+  } }))
+  await page.route('**/api/podcast/shows/daily-news/device-word/words', (route) => route.fulfill({ json: {
+    sourceUrl: 'https://qiniu.aiquannei.com/podcast/daily-news/device-word.en.words.srt',
+    cues: [{ id: '1', startMs: 100, endMs: 300, text: 'Hello' }, { id: '2', startMs: 400, endMs: 800, text: 'Helo' }],
   } }))
   await page.route('**/api/word/*', (route) => route.fulfill({ json: { word: 'hello', matchedFrom: 'exact', phonetic: '/həˈləʊ/', senses: [{ meaning: '词库释义' }] } }))
   await page.route('**/api/wordbook?*', (route) => route.fulfill({ json: { entries: [] } }))
@@ -89,7 +93,10 @@ test('podcast words always go directly to AI in device mode and return to dictio
   } }))
   async function selectWord(word: string) {
     await page.locator('[data-selection-english]').first().evaluate((element, word) => {
-      const node = element.firstChild!
+      const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+      let node: Node | null
+      while ((node = walker.nextNode()) && !node.textContent?.includes(word)) { /* Skip markup/other words. */ }
+      if (!node) throw new Error('Selection word not found')
       const start = node.textContent!.indexOf(word)
       const range = document.createRange(); range.setStart(node, start); range.setEnd(node, start + word.length)
       const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range)
@@ -102,6 +109,7 @@ test('podcast words always go directly to AI in device mode and return to dictio
   await expect(page.getByRole('status')).toContainText('已就绪')
   await page.goto('/podcast/shows/daily-news/device-word')
   await expect(page.locator('[data-selection-english]')).toBeVisible()
+  await expect(page.locator('[data-word-index]')).toHaveCount(2)
   for (const word of ['Hello', 'Helo', 'Hello']) {
     const request = page.waitForRequest((r) => r.url() === config.baseUrl + '/chat/completions' && r.method() === 'POST')
     await selectWord(word)

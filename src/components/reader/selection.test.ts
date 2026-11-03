@@ -17,6 +17,14 @@ it('selects only English from bilingual transcript ranges', () => {
   range.selectNodeContents(host)
   expect(pickSelection(range, host)?.text).toBe('Hello world.\nNext sentence.')
 })
+it('keeps cross-word span ranges and word context intact', () => {
+  document.body.innerHTML = '<main><p data-selection-english><span>Hello</span> <span>dear</span> <span>friends!</span></p><p data-selection-ignore>你好。</p></main>'
+  const host = document.querySelector('main')!, spans = host.querySelectorAll('span'), range = document.createRange()
+  range.setStart(spans[0].firstChild!, 0); range.setEnd(spans[2].firstChild!, 8)
+  expect(pickSelection(range, host)).toMatchObject({ text: 'Hello dear friends!', isWord: false, context: 'Hello dear friends!' })
+  range.selectNodeContents(spans[1])
+  expect(pickSelection(range, host)).toMatchObject({ text: 'dear', isWord: true, context: 'Hello dear friends!' })
+})
 it('ignores pure Chinese, controls and selections outside content', () => {
   expect(pick('<p>你好</p>', 'p')).toBeNull()
   expect(pick('<p data-selection-ignore>Playback controls</p>', 'p')).toBeNull()

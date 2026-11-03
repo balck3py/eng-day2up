@@ -1,6 +1,6 @@
 import { parseFeed, resourceUrl } from './feed'
 import { parseSrt, pairCues } from './srt'
-import type { Episode, EpisodeDetail } from './types'
+import type { Episode, EpisodeDetail, WordTrack } from './types'
 import { PROGRAMS, type Program } from './programs'
 
 export class PodcastError extends Error {
@@ -72,4 +72,14 @@ export async function loadEpisode(id: string, program: Program = PROGRAMS[0]): P
     episode, cues, englishError: english.error,
     chineseError: chinese.error ?? (cues.some((c) => !c.chineseText) ? '部分中文字幕不可用' : null),
   }
+}
+
+/** Optional enhancement: never delays the primary bilingual detail response. */
+export async function loadWordTrack(id: string, program: Program = PROGRAMS[0]): Promise<WordTrack> {
+  const episode = (await loadCatalog(program)).find((e) => e.id === id)
+  if (!episode) throw new PodcastError('节目不存在', 404)
+  if (!episode.englishWords) return { sourceUrl: null, cues: [] }
+  const cues = parseSrt(await fetchPodcastText(episode.englishWords, program))
+  if (!cues.length) throw new PodcastError('逐词字幕没有有效时间段')
+  return { sourceUrl: episode.englishWords, cues }
 }

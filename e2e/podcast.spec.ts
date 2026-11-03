@@ -3,6 +3,25 @@ import { test, expect, type Page } from '@playwright/test'
 const base = 'https://qiniu.aiquannei.com/podcast/daily-news/'
 const episode = { id: 'episode-one', title: 'Daily News Listening', publishedAt: '2026-11-01T01:00:00Z', image: null, channelImage: null, audio: base + 'test.mp3', english: base + 'test.srt', chinese: base + 'test.zh-CN.srt' }
 const cues = Array.from({ length: 30 }, (_, i) => ({ id: String(i), startMs: i * 2000, endMs: i * 2000 + 1500, text: `Speaker: This is sentence ${i} about learning English.`, chineseText: `这是第 ${i} 句中文。` }))
+const wordEpisode = { ...episode, id: 'word-episode', englishWords: base + 'word-episode.en.words.srt' }
+const wordSentences = [
+  { id: 'a', startMs: 1000, endMs: 2000, text: 'Speaker: Go go now.', chineseText: '现在出发。' },
+  { id: 'b', startMs: 4000, endMs: 6000, text: 'Speaker: Read English daily.', chineseText: '每天读英文。' },
+  { id: 'c', startMs: 8000, endMs: 9500, text: 'Speaker: Keep learning.', chineseText: '坚持学习。' },
+]
+const timedWords = [
+  { id: '1', startMs: 159, endMs: 400, text: 'Go' }, { id: '2', startMs: 1100, endMs: 1400, text: 'go' }, { id: '3', startMs: 2100, endMs: 2459, text: 'now.' },
+  { id: '4', startMs: 4100, endMs: 4400, text: 'Read' }, { id: '5', startMs: 4600, endMs: 4900, text: 'English' }, { id: '6', startMs: 5400, endMs: 5900, text: 'daily.' },
+  { id: '7', startMs: 8100, endMs: 8500, text: 'Keep' }, { id: '8', startMs: 8800, endMs: 9400, text: 'learning.' },
+]
+const wordPath = '/podcast/shows/daily-news/word-episode'
+async function installWordEpisode(page: Page) {
+  await page.route('**/api/podcast/shows/daily-news/word-episode', (route) => route.fulfill({ json: { episode: wordEpisode, cues: wordSentences, englishError: null, chineseError: null } }))
+  await page.route('**/api/podcast/shows/daily-news/word-episode/words', (route) => route.fulfill({ json: { sourceUrl: wordEpisode.englishWords, cues: timedWords } }))
+}
+const firstWordRow = (page: Page) => page.locator('ol[aria-label="节目字幕"] [role="button"]').first()
+const mediaTime = (page: Page) => page.locator('audio').evaluate((audio: HTMLAudioElement) => audio.currentTime)
+const paused = (page: Page) => page.locator('audio').evaluate((audio: HTMLAudioElement) => audio.paused)
 
 async function selectText(page: Page, selector: string, text?: string) {
   await page.locator(selector).first().evaluate((element, text) => {
@@ -215,7 +234,7 @@ test('real MP3 seeks, repeats sentences and continues after a paused continuous 
   const catalog = await loadCatalog()
   const latest = catalog.find((e) => e.english && e.chinese)!
   const detail = await loadEpisode(latest.id)
-  await page.route('**/api/podcast/shows/daily-news/live', (route) => route.fulfill({ json: detail }))
+  await page.route('**/api/podcast/shows/daily-news/live', (route) => route.fulfill({ json: { ...detail, episode: { ...detail.episode, englishWords: null } } }))
   await page.goto('/podcast/live')
   await expect(page.getByRole('heading', { name: latest.title })).toBeVisible()
   await expandPlayer(page)
@@ -405,4 +424,224 @@ test('real library renders the four feeds and their episode details', async ({ p
     await expect(page.locator('[data-selection-english]').first()).toBeVisible()
     await page.screenshot({ path: info.outputPath(`real-${program.id}-detail.png`) })
   }
+})
+
+test('word enhancement loads after readable sentences without replacing audio, then a last word beyond the old end plays completely', async ({ page }) => {
+  await installWordEpisode(page)
+  let release!: () => void
+  const pending = new Promise<void>((resolve) => { release = resolve })
+  await page.route('**/api/podcast/shows/daily-news/word-episode/words', async (route) => { await pending; await route.fulfill({ json: { sourceUrl: wordEpisode.englishWords, cues: timedWords } }).catch(() => {}) })
+  await page.goto(wordPath)
+  const row = firstWordRow(page)
+  await expect(row.locator('[data-selection-english]')).toHaveText('Go go now.')
+  await expect(row.locator('[data-word-index]')).toHaveCount(0)
+  await row.click({ position: { x: 8, y: 8 } })
+  await expect.poll(() => paused(page)).toBe(false)
+  await page.locator('audio').evaluate((a: HTMLAudioElement) => a.pause())
+  const at = await mediaTime(page), instance = await page.locator('audio').elementHandle()
+  release()
+  await expect(row.locator('[data-word-index]')).toHaveCount(3)
+  expect(await instance!.evaluate((audio) => audio.isConnected)).toBe(true)
+  expect(await mediaTime(page)).toBe(at); expect(await paused(page)).toBe(true)
+  await row.locator('[data-word-index="2"]').click()
+  expect(await mediaTime(page)).toBeGreaterThanOrEqual(2.1)
+  await expect(row).toHaveAttribute('aria-current', 'true')
+  await expect.poll(() => paused(page)).toBe(true)
+  expect(Math.abs(await mediaTime(page) - 2.459)).toBeLessThanOrEqual(0.15)
+  await row.locator('[data-word-index="2"]').click()
+  expect(await mediaTime(page)).toBeLessThan(2.4)
+})
+
+test('word jumps repeat the selected occurrence, resume continuous mode and share Chinese whole-sentence playback', async ({ page }) => {
+  await installWordEpisode(page); await page.goto(wordPath)
+  const row = firstWordRow(page)
+  await expect(row.locator('[data-word-index]')).toHaveCount(3)
+  await expandPlayer(page); await setRate(page, 0.5)
+  await row.locator('[data-word-index="1"]').click()
+  expect(await mediaTime(page)).toBeGreaterThanOrEqual(1.1); expect(await mediaTime(page)).toBeLessThan(1.4)
+  await page.getByRole('button', { name: '暂停播客' }).click()
+  const at = await mediaTime(page)
+  await page.getByRole('button', { name: '继续播放' }).click()
+  expect(await mediaTime(page)).toBeGreaterThanOrEqual(at)
+  await expect.poll(() => paused(page)).toBe(true)
+  await page.getByRole('button', { name: '继续播放' }).click()
+  expect(await mediaTime(page)).toBeLessThan(1.4)
+  await page.getByRole('button', { name: '暂停播客' }).click()
+  await page.getByLabel('播放模式').selectOption('continuous')
+  expect(await paused(page)).toBe(true)
+  await setRate(page, 1.2)
+  await row.locator('[data-word-index="2"]').click()
+  await expect.poll(() => mediaTime(page)).toBeGreaterThan(2.8)
+  expect(await paused(page)).toBe(false)
+  await page.getByRole('button', { name: '暂停播客' }).click()
+  await row.locator('[data-word-index="1"]').click()
+  await expect(page.getByLabel('播放模式')).toHaveValue('continuous')
+  expect(await mediaTime(page)).toBeLessThan(1.5)
+  await page.getByRole('button', { name: '暂停播客' }).click()
+  await row.locator('p[lang="zh-CN"]').click()
+  expect(await mediaTime(page)).toBeGreaterThanOrEqual(0.159); expect(await mediaTime(page)).toBeLessThan(0.5)
+})
+
+test('keyboard word navigation preserves one Tab stop per row and compact bilingual layout', async ({ page }, info) => {
+  await installWordEpisode(page); await page.goto(wordPath)
+  const row = firstWordRow(page)
+  await expect(row.locator('[data-word-index]')).toHaveCount(3)
+  await row.focus(); await row.press('ArrowRight'); await row.press('ArrowRight')
+  await expect(row).toHaveAttribute('aria-label', /定位词 go$/)
+  expect(await paused(page)).toBe(true)
+  await row.press('Enter'); expect(await mediaTime(page)).toBeGreaterThanOrEqual(1.1)
+  await page.locator('audio').evaluate((a: HTMLAudioElement) => a.pause())
+  await row.press('End'); await row.press('Space')
+  expect(await mediaTime(page)).toBeGreaterThanOrEqual(2.1)
+  await page.locator('audio').evaluate((a: HTMLAudioElement) => a.pause())
+  await row.press('Home'); await row.press('Escape'); await row.press('Enter')
+  expect(await mediaTime(page)).toBeLessThan(0.5)
+  await page.locator('audio').evaluate((a: HTMLAudioElement) => a.pause())
+  const at = await mediaTime(page)
+  await row.press('Shift+ArrowRight'); expect(await mediaTime(page)).toBe(at)
+  expect(await row.locator('[tabindex]').count()).toBe(0)
+  await page.setViewportSize({ width: 320, height: 568 })
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+  await page.evaluate(() => { window.getSelection()?.removeAllRanges(); document.documentElement.style.fontSize = '20px' })
+  await row.focus(); await row.press('End')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(320)
+  await expect(row.locator('p[lang="zh-CN"]')).toHaveText('现在出发。')
+  await page.screenshot({ path: info.outputPath('words-keyboard-320-dark.png'), fullPage: true })
+  await expandPlayer(page)
+  await page.screenshot({ path: info.outputPath('words-dock-320-dark.png'), fullPage: true })
+})
+
+test('word spans keep long-press and cross-word translation isolated from playback and selection clearing', async ({ page }) => {
+  await installWordEpisode(page); await page.goto(wordPath)
+  // This short fixture must have actual scroll space, including on a tall mobile viewport.
+  await page.evaluate(() => { document.body.style.minHeight = '1600px' })
+  await page.route('**/api/word/go', (route) => route.fulfill({ json: { word: 'go', matchedFrom: 'exact', phonetic: '/ɡəʊ/', senses: [{ meaning: '走' }] } }))
+  const row = firstWordRow(page)
+  await expect(row.locator('[data-word-index]')).toHaveCount(3)
+  await row.dispatchEvent('pointerdown', { clientX: 20, clientY: 20, pointerType: 'touch' })
+  await page.waitForTimeout(500)
+  await row.locator('[data-selection-english]').evaluate((element) => {
+    const range = document.createRange(); range.selectNodeContents(element)
+    window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(range)
+    document.dispatchEvent(new Event('selectionchange'))
+  })
+  await row.dispatchEvent('pointerup', { pointerType: 'touch' }); await row.locator('[data-word-index="1"]').dispatchEvent('click')
+  await expect(page.getByRole('dialog')).toContainText('这是自动翻译')
+  expect(await mediaTime(page)).toBe(0); expect(await paused(page)).toBe(true)
+  await row.locator('[data-word-index="1"]').click()
+  expect(await paused(page)).toBe(true)
+  await page.evaluate(() => window.getSelection()?.removeAllRanges())
+  await row.dispatchEvent('pointerdown', { clientX: 20, clientY: 20 })
+  await selectText(page, '[data-selection-english]', 'go')
+  await row.dispatchEvent('pointerup')
+  const panel = page.getByRole('dialog')
+  await expect(panel).toContainText('/ɡəʊ/')
+  const favorite = page.waitForRequest((request) => request.url().endsWith('/api/wordbook') && request.method() === 'POST')
+  await panel.getByRole('button', { name: '收藏 go' }).click()
+  expect((await favorite).postDataJSON().sourceContext).toBe('Go go now.')
+  await expect(panel).toBeVisible()
+  expect(await paused(page)).toBe(true)
+  await page.evaluate(() => window.scrollBy(0, 250))
+  await expect(panel).toHaveCount(0)
+  expect(await paused(page)).toBe(true)
+  await page.evaluate(() => window.getSelection()?.removeAllRanges())
+  await row.locator('[data-word-index="1"]').click()
+  await expect.poll(() => paused(page)).toBe(false)
+})
+
+test('optional word failure retries locally, handles missing tokens, and rejects a changed source declaration', async ({ page }) => {
+  await installWordEpisode(page)
+  let phase = 'error'
+  await page.route('**/api/podcast/shows/daily-news/word-episode/words', (route) => phase === 'error' ? route.fulfill({ status: 502, json: { error: '逐词文件暂时不可用' } }) : route.fulfill({ json: { sourceUrl: phase === 'changed' ? base + 'new.words.srt' : wordEpisode.englishWords, cues: timedWords.filter((word) => word.id !== '2') } }))
+  await page.goto(wordPath)
+  await expect(page.getByText('逐词文件暂时不可用')).toBeVisible()
+  const row = firstWordRow(page)
+  await row.click({ position: { x: 8, y: 8 } })
+  expect(await mediaTime(page)).toBeGreaterThanOrEqual(1)
+  await page.locator('audio').evaluate((a: HTMLAudioElement) => a.pause())
+  const instance = await page.locator('audio').elementHandle(), at = await mediaTime(page)
+  phase = 'valid'; await page.getByRole('button', { name: '重试逐词字幕' }).click()
+  await expect(page.getByText('部分逐词定位不可用', { exact: false })).toBeVisible()
+  await expect(row.locator('[data-word-index]')).toHaveCount(0)
+  await expect(page.locator('[data-selection-english]').nth(1).locator('[data-word-index]')).toHaveCount(3)
+  await expect(row.locator('p[lang="zh-CN"]')).toHaveText('现在出发。')
+  expect(await instance!.evaluate((a) => a.isConnected)).toBe(true)
+  expect(await mediaTime(page)).toBe(at)
+  phase = 'changed'; await page.getByRole('button', { name: '重试逐词字幕' }).click()
+  await expect(page.getByText('逐词字幕声明已更新', { exact: false })).toBeVisible()
+  await expect(page.locator('[data-word-index]')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '重新加载节目字幕' })).toBeVisible()
+  await page.route('**/api/podcast/shows/daily-news/word-episode', (route) => route.fulfill({ json: { episode: { ...wordEpisode, englishWords: base + 'new.words.srt' }, cues: wordSentences, englishError: null, chineseError: null } }))
+  await page.getByRole('button', { name: '重新加载节目字幕' }).click()
+  await expect(page.locator('[data-selection-english]').nth(1).locator('[data-word-index]')).toHaveCount(3)
+  await expect(page.getByText('逐词字幕声明已更新', { exact: false })).toHaveCount(0)
+})
+
+test('late word responses cannot affect another program and old episodes make no enhancement request', async ({ page }) => {
+  await installWordEpisode(page)
+  let release!: () => void
+  const pending = new Promise<void>((r) => { release = r })
+  await page.route('**/api/podcast/shows/daily-news/word-episode/words', async (route) => { await pending; await route.fulfill({ json: { sourceUrl: wordEpisode.englishWords, cues: timedWords } }).catch(() => {}) })
+  await page.goto(wordPath)
+  await expect(firstWordRow(page).locator('[data-selection-english]')).toHaveText('Go go now.')
+  let extra = 0
+  page.on('request', (request) => { if (request.url().endsWith('/words')) extra++ })
+  await page.goto('/podcast/shows/ai-digest/episode-one')
+  release()
+  await expect(page.locator('[data-selection-english]').first()).toContainText('This is sentence')
+  await expect(page.locator('[data-word-index]')).toHaveCount(0)
+  expect(extra).toBe(0); expect(await paused(page)).toBe(true)
+})
+
+test('real MP3 word seeking uses actual word starts and sentence-final word ends at slow and fast speeds', async ({ page }, info) => {
+  test.skip(process.env.PODCAST_LIVE_TEST !== '1', 'Opt-in real word timing and audio integration')
+  test.setTimeout(90_000)
+  const { loadCatalog, loadEpisode, loadWordTrack } = await import('../src/lib/podcast/load')
+  const { alignWords } = await import('../src/lib/podcast/words')
+  const latest = (await loadCatalog()).find((e) => e.englishWords)!
+  const [detail, track] = await Promise.all([loadEpisode(latest.id), loadWordTrack(latest.id)])
+  const alignment = alignWords(detail.cues, track.cues)
+  expect(alignment.size).toBe(detail.cues.length)
+  await page.route('**/api/podcast/shows/daily-news/live-words', (route) => route.fulfill({ json: detail }))
+  await page.route('**/api/podcast/shows/daily-news/*/words', (route) => route.fulfill({ json: track }))
+  await page.goto('/podcast/shows/daily-news/live-words')
+  await expect(page.locator('[data-word-index]').first()).toBeVisible()
+  await expect.poll(() => page.locator('audio').evaluate((a: HTMLAudioElement) => a.readyState), { timeout: 15_000 }).toBeGreaterThan(0)
+  await expandPlayer(page)
+  await page.locator('audio').evaluate((audio: HTMLAudioElement) => {
+    audio.dataset.pauseCount = '0'
+    audio.addEventListener('seeking', () => { audio.dataset.seekStart = String(audio.currentTime) })
+    audio.addEventListener('pause', () => { audio.dataset.pausedAt = String(audio.currentTime); audio.dataset.pauseCount = String(Number(audio.dataset.pauseCount) + 1) })
+  })
+  const values = [...alignment.values()]
+  const crossed = values.find((sentence) => sentence.words.at(-1)!.startMs > detail.cues.find((cue) => cue.id === sentence.cueId)!.endMs)!
+  expect(crossed).toBeDefined()
+  const samples = [values[0], values[Math.floor(values.length / 2)], crossed]
+  const timings = []
+  for (const [i, sentence] of samples.entries()) {
+    const wordIndex = Math.max(0, sentence.words.length - (i === 0 ? 2 : 1))
+    const word = sentence.words[wordIndex]
+    const rate = i === 0 ? 0.5 : 1.2
+    await setRate(page, rate)
+    const rowIndex = detail.cues.findIndex((cue) => cue.id === sentence.cueId)
+    const row = page.locator('ol[aria-label="节目字幕"] [role="button"]').nth(rowIndex)
+    const pauses = Number(await page.locator('audio').getAttribute('data-pause-count'))
+    await row.locator(`[data-word-index="${wordIndex}"]`).click()
+    await expect.poll(async () => Number(await page.locator('audio').getAttribute('data-pause-count')), { timeout: 15_000 }).toBeGreaterThan(pauses)
+    expect(await paused(page)).toBe(true)
+    const seek = Number(await page.locator('audio').getAttribute('data-seek-start'))
+    const stop = Number(await page.locator('audio').getAttribute('data-paused-at'))
+    expect(Math.abs(seek - word.startMs / 1000)).toBeLessThanOrEqual(0.15)
+    expect(Math.abs(stop - sentence.endMs / 1000)).toBeLessThanOrEqual(0.15)
+    timings.push({ cueId: sentence.cueId, wordIndex, rate, expectedStartMs: word.startMs, expectedEndMs: sentence.endMs, actualStartMs: seek * 1000, actualEndMs: stop * 1000, startErrorMs: (seek * 1000) - word.startMs, endErrorMs: (stop * 1000) - sentence.endMs })
+  }
+  await page.getByLabel('播放模式').selectOption('continuous')
+  const row = page.locator('ol[aria-label="节目字幕"] [role="button"]').nth(detail.cues.findIndex((cue) => cue.id === crossed.cueId))
+  await row.locator(`[data-word-index="${crossed.words.length - 1}"]`).click()
+  await expect.poll(() => mediaTime(page)).toBeGreaterThan(crossed.endMs / 1000 + 0.2)
+  expect(await paused(page)).toBe(false)
+  await page.getByRole('button', { name: '暂停播客' }).click()
+  await info.attach('real-word-timing.json', { body: JSON.stringify({ episodeId: latest.id, sentences: detail.cues.length, words: track.cues.length, timings }, null, 2), contentType: 'application/json' })
+  console.log(`${info.project.name} real word timings: ${JSON.stringify(timings)}`)
+  await page.screenshot({ path: info.outputPath('real-word-playback.png') })
 })
