@@ -5,9 +5,10 @@ export interface DeviceModelConfig extends LocalModelConfig { disableThinking: b
 export class DeviceTranslationError extends Error {}
 
 const STORAGE_KEY = 'translationRequestSource'
+const CONFIG_STORAGE_KEY = 'deviceTranslationConfig'
 const listeners = new Set<() => void>()
 let memorySource: RequestSource | null = null
-let cached: { config: DeviceModelConfig; expires: number } | null = null
+let cached: DeviceModelConfig | null = null
 let pending: Promise<DeviceModelConfig> | null = null
 let controller: AbortController | null = null
 let generation = 0
@@ -20,10 +21,15 @@ export function getRequestSource(): RequestSource {
 }
 export function getRequestSourceServer(): RequestSource { return 'vercel' }
 
-export function clearDeviceConfig() {
+function invalidateDeviceConfig() {
   ++generation
   controller?.abort()
   controller = null; pending = null; cached = null
+}
+
+export function clearDeviceConfig() {
+  invalidateDeviceConfig()
+  try { localStorage.removeItem(CONFIG_STORAGE_KEY) } catch { /* Storage may be unavailable. */ }
 }
 
 export function setRequestSource(source: RequestSource) {
@@ -34,9 +40,11 @@ export function setRequestSource(source: RequestSource) {
 }
 
 function storage(event: StorageEvent) {
+  if (event.key === CONFIG_STORAGE_KEY) { invalidateDeviceConfig(); return }
   if (event.key !== STORAGE_KEY && event.key !== null) return
   memorySource = null
-  clearDeviceConfig()
+  if (event.key === null || getRequestSource() !== 'device') clearDeviceConfig()
+  else invalidateDeviceConfig()
   listeners.forEach((listener) => listener())
 }
 export function subscribeRequestSource(listener: () => void) {
@@ -59,9 +67,31 @@ function withAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   })
 }
 
+function parseConfig(value: unknown): DeviceModelConfig | null {
+  if (!value || typeof value !== 'object') return null
+  const body = value as Record<string, unknown>
+  if (typeof body.baseUrl !== 'string' || typeof body.model !== 'string' || typeof body.apiKey !== 'string' || !body.model.trim() || !body.apiKey.trim()) return null
+  try {
+    const url = new URL(body.baseUrl)
+    if (url.protocol !== 'https:' || url.username || url.password) return null
+  } catch { return null }
+  return { baseUrl: body.baseUrl, model: body.model, apiKey: body.apiKey, disableThinking: body.disableThinking === true }
+}
+
 export async function getDeviceConfig(signal?: AbortSignal): Promise<DeviceModelConfig> {
   signal?.throwIfAborted()
-  if (cached && cached.expires > Date.now()) return cached.config
+  if (cached) return cached
+  try {
+    const stored = localStorage.getItem(CONFIG_STORAGE_KEY)
+    if (stored) {
+      const config = parseConfig(JSON.parse(stored))
+      if (!config) throw new Error('Invalid cached config')
+      cached = config
+      return config
+    }
+  } catch {
+    try { localStorage.removeItem(CONFIG_STORAGE_KEY) } catch { /* Use memory when storage is unavailable. */ }
+  }
   if (!pending) {
     const version = generation
     const aborter = new AbortController()
@@ -73,13 +103,11 @@ export async function getDeviceConfig(signal?: AbortSignal): Promise<DeviceModel
         if (response.status === 401 || response.status === 403) clearDeviceConfig()
         throw new DeviceTranslationError(body.error ?? '无法获取设备翻译配置')
       }
-      if (typeof body.baseUrl !== 'string' || typeof body.model !== 'string' || typeof body.apiKey !== 'string' || !body.model || !body.apiKey || new URL(body.baseUrl).protocol !== 'https:') {
-        throw new DeviceTranslationError('设备翻译配置无效，请切回 Vercel')
-      }
-      const config: DeviceModelConfig = { baseUrl: body.baseUrl, model: body.model, apiKey: body.apiKey, disableThinking: body.disableThinking === true }
+      const config = parseConfig(body)
+      if (!config) throw new DeviceTranslationError('设备翻译配置无效，请切回 Vercel')
       if (version !== generation) throw new DOMException('Aborted', 'AbortError')
-      // The key only lives in memory, never in localStorage or an HTTP cache.
-      cached = { config, expires: Date.now() + 5 * 60_000 }
+      cached = config
+      try { localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(config)) } catch { /* Keep using the in-memory config. */ }
       return config
     })()
     pending = load
@@ -87,15 +115,4 @@ export async function getDeviceConfig(signal?: AbortSignal): Promise<DeviceModel
     void load.then(settled, settled)
   }
   return withAbort(pending, signal)
-}
-
-/** Keep the existing daily quota; this endpoint never forwards the model request. */
-export async function authorizeDeviceRequest(signal?: AbortSignal) {
-  signal?.throwIfAborted()
-  const response = await fetch('/api/translate/config', { method: 'POST', cache: 'no-store', signal })
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}))
-    if (response.status === 401 || response.status === 403) clearDeviceConfig()
-    throw new DeviceTranslationError(body.error ?? '设备翻译授权失败，请重试')
-  }
 }

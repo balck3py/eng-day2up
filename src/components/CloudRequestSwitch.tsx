@@ -27,8 +27,8 @@ export function CloudRequestSwitch() {
       </button>
     </div>
     <p className="mt-3 text-sm leading-relaxed text-ink-3">开启后，单词和句子均由浏览器直接请求 AI，跳过词库查询；关闭后沿用原有查询和翻译流程。仅影响后续请求，选择会在当前浏览器记住。</p>
-    <p className="mt-2 text-xs leading-relaxed text-ink-3">设备模式会在页面内存中使用网站的 API Key，不写入本地配置；上游需允许本站跨域。已配置的自定义本地模型继续优先使用。</p>
+    <p className="mt-2 text-xs leading-relaxed text-ink-3">模型配置（含 API Key）保存在当前浏览器，刷新后复用，翻译时不再向 Vercel 检查配额。退出登录或切回 Vercel 会清除；上游需允许本站跨域。自定义本地模型继续优先。</p>
     {source === 'device' && <p role="status" className="mt-2 break-words text-xs text-ink-2">{status || '正在获取网站模型配置…'}</p>}
-    {source === 'device' && status.startsWith('配置获取失败') && <button type="button" className="mt-1 min-h-11 text-sm text-ink underline" onClick={() => { clearDeviceConfig(); setStatus('正在获取网站模型配置…'); setAttempt((value) => value + 1) }}>重试获取配置</button>}
+    {source === 'device' && <button type="button" disabled={status.startsWith('正在获取')} className="mt-1 min-h-11 text-sm text-ink underline disabled:opacity-50" onClick={() => { clearDeviceConfig(); setStatus('正在获取网站模型配置…'); setAttempt((value) => value + 1) }}>{status.startsWith('配置获取失败') ? '重试获取配置' : '重新获取配置'}</button>}
   </section>
 }

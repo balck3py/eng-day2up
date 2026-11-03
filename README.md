@@ -112,7 +112,7 @@ npm run dev                          # http://localhost:3000
 
 ### Choose where cloud translation requests originate
 
-In **Settings → Cloud translation request source**, enable device requests to fetch the website's model configuration and call it directly from the browser. The default remains Vercel. Authentication and daily quota checks remain; fetched credentials stay in page memory, and existing custom local models take precedence. See the [usage and validation notes](docs/device-translation.md).
+In **Settings → Cloud translation request source**, enable device requests to fetch the website's model configuration once and save it in the browser. Reloads and subsequent translations reuse it without a per-request website quota check. The default remains Vercel, with its existing lookup and quota behavior. Settings provides a manual configuration refresh; signing out or disabling device mode clears the cached credentials. Existing custom local models take precedence. See the [usage and validation notes](docs/device-translation.md).
 
 ### Using your own local model (no code, no redeploy)
 

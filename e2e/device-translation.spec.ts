@@ -19,17 +19,18 @@ test.beforeEach(async ({ context, page }) => {
   const jwt = `${encode({ alg: 'HS256', typ: 'JWT' })}.${encode({ sub: '00000000-0000-4000-8000-000000000001', aud: 'authenticated', role: 'authenticated', exp: Math.floor(Date.now() / 1000) + 3600 })}.test`
   const session = { access_token: jwt, refresh_token: 'test-refresh', token_type: 'bearer', expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, user: { id: '00000000-0000-4000-8000-000000000001', email: 'podcast-test@example.test' } }
   await context.addCookies([{ name: 'sb-127-auth-token', value: 'base64-' + encode(session), domain: 'localhost', path: '/' }])
-  await page.route('**/api/translate/config', (route) => route.fulfill({ json: route.request().method() === 'POST' ? { ok: true } : config }))
+  await page.route('**/api/translate/config', (route) => route.fulfill({ status: route.request().method() === 'POST' ? 405 : 200, json: route.request().method() === 'POST' ? { error: 'Method not allowed' } : config }))
   await page.route('**/api/fetch-page', (route) => route.fulfill({ json: { url: 'https://qiniu.aiquannei.com/podcast/daily-news/example.md', text: 'This is an English sentence for translation.' } }))
   await page.route('**/api/translate', (route) => route.fulfill({ contentType: 'text/event-stream', body: 'data: {"type":"delta","value":"Vercel 译文"}\n\n' }))
   await page.route('https://device-model.example/**', (route) => route.fulfill({ headers: cors, contentType: 'text/event-stream', body: route.request().method() === 'OPTIONS' ? '' : 'data: {"choices":[{"delta":{"content":"设备译文"}}]}\n\ndata: [DONE]\n' }))
 })
 
-test('device switch persists, preloads config without storing the key and directs selection requests', async ({ page }, info) => {
+test('device config persists across reloads and translations without authorization calls and supports explicit refresh', async ({ page }, info) => {
   const upstream: string[] = [], server: string[] = []
-  let configs = 0
+  let configs = 0, authorizations = 0
   page.on('request', (request) => {
     if (request.url().includes('/api/translate/config') && request.method() === 'GET') configs++
+    if (request.url().includes('/api/translate/config') && request.method() === 'POST') authorizations++
     if (request.url().endsWith('/api/translate')) server.push(request.url())
     if (request.url().startsWith(config.baseUrl) && request.method() === 'POST') upstream.push(request.url())
   })
@@ -40,11 +41,11 @@ test('device switch persists, preloads config without storing the key and direct
   await toggle.click()
   await expect(page.getByRole('status')).toContainText('已就绪')
   expect(configs).toBe(1)
-  expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain(config.apiKey)
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('deviceTranslationConfig')!))).toEqual(config)
   await page.reload()
   await expect(toggle).toBeChecked()
   await expect(page.getByRole('status')).toContainText('已就绪')
-  expect(configs).toBe(2)
+  expect(configs).toBe(1)
   await page.screenshot({ path: info.outputPath('settings-device.png'), fullPage: true })
   const request = page.waitForRequest((r) => r.url() === config.baseUrl + '/chat/completions' && r.method() === 'POST')
   await reader(page)
@@ -53,11 +54,20 @@ test('device switch persists, preloads config without storing the key and direct
   expect(sent.headers().authorization).toBe('Bearer ' + config.apiKey)
   expect(sent.postDataJSON()).toMatchObject({ model: config.model, thinking: { type: 'disabled' } })
   expect(server).toHaveLength(0); expect(upstream).toHaveLength(1)
-  await page.goto('/settings'); await toggle.click()
+  await reader(page)
+  await expect(page.getByRole('dialog')).toContainText('设备译文')
+  expect(upstream).toHaveLength(2); expect(configs).toBe(1); expect(authorizations).toBe(0)
+  await page.goto('/settings')
+  await expect(page.getByRole('status')).toContainText('已就绪')
+  await page.getByRole('button', { name: '重新获取配置', exact: true }).click()
+  await expect(page.getByRole('status')).toContainText('已就绪')
+  expect(configs).toBe(2)
+  await toggle.click()
   await expect(toggle).not.toBeChecked()
+  expect(await page.evaluate(() => localStorage.getItem('deviceTranslationConfig'))).toBeNull()
   await reader(page)
   await expect(page.getByRole('dialog')).toContainText('Vercel 译文')
-  expect(server.length).toBeGreaterThanOrEqual(1); expect(upstream).toHaveLength(1)
+  expect(server.length).toBeGreaterThanOrEqual(1); expect(upstream).toHaveLength(2); expect(authorizations).toBe(0)
 })
 
 test('podcast words always go directly to AI in device mode and return to dictionary lookup when disabled', async ({ page }) => {
@@ -106,7 +116,7 @@ test('podcast words always go directly to AI in device mode and return to dictio
   }
   expect(dictionary).toHaveLength(0)
   expect(upstream.length).toBeGreaterThanOrEqual(3)
-  expect(authorizations).toBeGreaterThanOrEqual(3)
+  expect(authorizations).toBe(0)
   const deviceCalls = upstream.length
   await page.goto('/settings'); await toggle.click()
   await expect(toggle).not.toBeChecked()
@@ -142,7 +152,7 @@ test('custom model save and clear remain independent of the cloud request switch
   expect(deviceCalls).toBe(1)
 })
 
-test('device errors remain visible and a quota denial prevents upstream calls', async ({ page }) => {
+test('device errors remain visible without authorization calls or repeated configuration fetches', async ({ page }) => {
   let attempts = 0, serverCalls = 0
   await page.route('https://device-model.example/**', (route) => {
     if (route.request().method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors })
@@ -154,23 +164,31 @@ test('device errors remain visible and a quota denial prevents upstream calls', 
   await reader(page)
   await expect(page.getByRole('dialog').getByRole('alert')).toContainText('CORS')
   expect(attempts).toBe(1); expect(serverCalls).toBe(0)
-  await page.route('**/api/translate/config', (route) => route.request().method() === 'POST' ? route.fulfill({ status: 429, json: { error: '今日配额已用完' } }) : route.fulfill({ json: config }))
+  let extraConfigs = 0
+  await page.route('**/api/translate/config', (route) => { extraConfigs++; return route.fulfill({ status: 500, json: { error: 'Must not call the website' } }) })
   await reader(page)
-  await expect(page.getByRole('dialog').getByRole('alert')).toContainText('今日配额已用完')
-  expect(attempts).toBe(1)
+  await expect(page.getByRole('dialog').getByRole('alert')).toContainText('CORS')
+  expect(attempts).toBe(2); expect(extraConfigs).toBe(0); expect(serverCalls).toBe(0)
 })
 
-test('request mode follows other tabs and logging out does not persist credentials', async ({ page, context }) => {
+test('request mode and cached config follow other tabs and logout clears persisted credentials', async ({ page, context }) => {
   await page.goto('/settings')
   await page.getByRole('switch').click()
   await expect(page.getByRole('status')).toContainText('已就绪')
   const other = await context.newPage()
-  await other.route('**/api/translate/config', (route) => route.fulfill({ json: config }))
+  let extraConfigs = 0
+  await other.route('**/api/translate/config', (route) => { extraConfigs++; return route.fulfill({ status: 500, json: { error: 'Must use cached config' } }) })
   await other.goto('/settings')
   await expect(other.getByRole('switch')).toBeChecked()
   await expect(other.getByRole('status')).toContainText('已就绪')
+  expect(extraConfigs).toBe(0)
   await page.getByRole('switch').click()
   await expect(other.getByRole('switch')).not.toBeChecked()
+  expect(await other.evaluate(() => localStorage.getItem('deviceTranslationConfig'))).toBeNull()
+  await page.getByRole('switch').click()
+  await expect(page.getByRole('status')).toContainText('已就绪')
+  await expect(other.getByRole('switch')).toBeChecked()
+  expect(await page.evaluate(() => localStorage.getItem('deviceTranslationConfig'))).not.toBeNull()
   await other.close()
   await page.getByRole('button', { name: '登出', exact: true }).click()
   await expect(page).toHaveURL(/\/login$/)

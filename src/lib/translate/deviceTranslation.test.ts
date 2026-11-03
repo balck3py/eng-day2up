@@ -6,7 +6,7 @@ const sse = () => new Response('data: {"choices":[{"delta":{"reasoning_content":
 beforeEach(async () => { vi.resetModules(); localStorage.clear(); device = await import('./deviceTranslation') })
 afterEach(() => { device.clearDeviceConfig(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
-it('defaults to Vercel, remembers only the choice, and shares a memory-only configuration preload', async () => {
+it('defaults to Vercel and persists a shared configuration preload across reloads without expiry', async () => {
   expect(device.getRequestSource()).toBe('vercel')
   device.setRequestSource('device')
   const fetcher = vi.fn().mockImplementation(async () => Response.json(config)); vi.stubGlobal('fetch', fetcher)
@@ -14,10 +14,15 @@ it('defaults to Vercel, remembers only the choice, and shares a memory-only conf
   expect(a).toBe(b); await device.getDeviceConfig()
   expect(fetcher).toHaveBeenCalledTimes(1)
   expect(fetcher.mock.calls[0][1].cache).toBe('no-store')
-  expect(localStorage.length).toBe(1)
+  expect(localStorage.length).toBe(2)
   expect(localStorage.getItem('translationRequestSource')).toBe('device')
-  expect(JSON.stringify(localStorage)).not.toContain(config.apiKey)
+  expect(JSON.parse(localStorage.getItem('deviceTranslationConfig')!)).toEqual(config)
+  vi.resetModules(); device = await import('./deviceTranslation')
+  vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 7 * 24 * 60 * 60_000)
+  expect(await device.getDeviceConfig()).toEqual(config)
+  expect(fetcher).toHaveBeenCalledTimes(1)
   device.setRequestSource('vercel')
+  expect(localStorage.getItem('deviceTranslationConfig')).toBeNull()
   await device.getDeviceConfig(); expect(fetcher).toHaveBeenCalledTimes(2)
 })
 
@@ -27,7 +32,42 @@ it('does not let a late response restore credentials after clearing the session'
   const loading = device.getDeviceConfig()
   device.clearDeviceConfig(); resolve(Response.json(config))
   await expect(loading).rejects.toMatchObject({ name: 'AbortError' })
+  expect(localStorage.getItem('deviceTranslationConfig')).toBeNull()
   expect((await device.getDeviceConfig()).model).toBe('new-model')
+})
+
+it.each(['{', JSON.stringify({ ...config, baseUrl: 'http://insecure.example' }), JSON.stringify({ ...config, baseUrl: 'https://user:password@model.example' }), JSON.stringify({ ...config, apiKey: '' })])('replaces an invalid locally saved configuration: %s', async (stored) => {
+  localStorage.setItem('deviceTranslationConfig', stored)
+  const fetcher = vi.fn().mockImplementation(async () => Response.json(config)); vi.stubGlobal('fetch', fetcher)
+  expect(await device.getDeviceConfig()).toEqual(config)
+  expect(fetcher).toHaveBeenCalledTimes(1)
+  expect(JSON.parse(localStorage.getItem('deviceTranslationConfig')!)).toEqual(config)
+})
+
+it('reuses the in-memory configuration when browser storage is unavailable', async () => {
+  vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('Storage blocked') })
+  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Storage blocked') })
+  const fetcher = vi.fn().mockImplementation(async () => Response.json(config)); vi.stubGlobal('fetch', fetcher)
+  expect(await device.getDeviceConfig()).toEqual(config)
+  expect(await device.getDeviceConfig()).toEqual(config)
+  expect(fetcher).toHaveBeenCalledTimes(1)
+})
+
+it('invalidates memory on another tab refreshing or clearing the locally saved config without refetching immediately', async () => {
+  const fetcher = vi.fn().mockImplementation(async () => Response.json(config)); vi.stubGlobal('fetch', fetcher)
+  const unsubscribe = device.subscribeRequestSource(vi.fn())
+  try {
+    await device.getDeviceConfig()
+    localStorage.setItem('deviceTranslationConfig', JSON.stringify({ ...config, model: 'updated-model' }))
+    window.dispatchEvent(new StorageEvent('storage', { key: 'deviceTranslationConfig' }))
+    expect((await device.getDeviceConfig()).model).toBe('updated-model')
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    localStorage.removeItem('deviceTranslationConfig')
+    window.dispatchEvent(new StorageEvent('storage', { key: 'deviceTranslationConfig' }))
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    await device.getDeviceConfig()
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  } finally { unsubscribe() }
 })
 
 it('cancels an individual waiter without cancelling a shared configuration load', async () => {
@@ -41,10 +81,10 @@ it('cancels an individual waiter without cancelling a shared configuration load'
   resolve(Response.json(config)); await expect(b).resolves.toEqual(config)
 })
 
-it('streams through the device endpoint with the server model parameters and retained quota', async () => {
+it('streams through the device endpoint with the server model parameters and no authorization round trip', async () => {
   device.setRequestSource('device')
   const aborter = new AbortController()
-  const fetcher = vi.fn().mockImplementation(async (url, options) => url === '/api/translate/config' ? Response.json(options?.method === 'POST' ? { ok: true } : config) : sse())
+  const fetcher = vi.fn().mockImplementation(async (url) => url === '/api/translate/config' ? Response.json(config) : sse())
   vi.stubGlobal('fetch', fetcher)
   const { streamTranslate } = await import('./client')
   const delta = vi.fn()
@@ -56,15 +96,18 @@ it('streams through the device endpoint with the server model parameters and ret
   expect(options.headers.Authorization).toBe('Bearer ' + config.apiKey)
   expect(JSON.parse(options.body)).toMatchObject({ model: config.model, stream: true, thinking: { type: 'disabled' } })
   expect(fetcher.mock.calls.some(([url]) => url === '/api/translate')).toBe(false)
-  expect(fetcher.mock.calls.some(([url, options]) => url === '/api/translate/config' && options.method === 'POST')).toBe(true)
+  expect(fetcher.mock.calls.filter(([url]) => url === '/api/translate/config')).toHaveLength(1)
+  expect(fetcher.mock.calls[0][1].method).toBeUndefined()
 })
 
-it('does not contact the upstream when quota is denied', async () => {
+it('uses the locally saved config for subsequent translations without any website request', async () => {
   device.setRequestSource('device')
-  const fetcher = vi.fn().mockImplementation(async (_url, options) => options?.method === 'POST' ? Response.json({ error: '今日配额已用完' }, { status: 429 }) : Response.json(config)); vi.stubGlobal('fetch', fetcher)
+  localStorage.setItem('deviceTranslationConfig', JSON.stringify(config))
+  const fetcher = vi.fn().mockImplementation(async () => sse()); vi.stubGlobal('fetch', fetcher)
   const { streamTranslate } = await import('./client')
-  expect((await streamTranslate('A sentence.', 'en2zh', vi.fn())).error).toBe('今日配额已用完')
-  expect(fetcher.mock.calls.every(([url]) => url === '/api/translate/config')).toBe(true)
+  for (let i = 0; i < 3; i++) expect((await streamTranslate('A sentence.', 'en2zh', vi.fn())).error).toBeNull()
+  expect(fetcher).toHaveBeenCalledTimes(3)
+  expect(fetcher.mock.calls.every(([url]) => url === config.baseUrl + '/chat/completions')).toBe(true)
 })
 
 it('preserves custom-model precedence and its existing request format', async () => {
@@ -80,8 +123,8 @@ it('preserves custom-model precedence and its existing request format', async ()
 
 it('reports CORS/network errors without silently changing request origin', async () => {
   device.setRequestSource('device')
-  const fetcher = vi.fn().mockImplementation(async (url, options) => {
-    if (url === '/api/translate/config') return Response.json(options?.method === 'POST' ? { ok: true } : config)
+  const fetcher = vi.fn().mockImplementation(async (url) => {
+    if (url === '/api/translate/config') return Response.json(config)
     throw new TypeError('Failed to fetch')
   }); vi.stubGlobal('fetch', fetcher)
   const { streamTranslate } = await import('./client')
@@ -92,8 +135,8 @@ it('reports CORS/network errors without silently changing request origin', async
 it('always asks the device model for words, including repeated known words and spelling corrections, without consulting the dictionary', async () => {
   device.setRequestSource('device')
   const aborter = new AbortController()
-  const fetcher = vi.fn().mockImplementation(async (url, options) => {
-    if (url === '/api/translate/config') return Response.json(options?.method === 'POST' ? { ok: true } : config)
+  const fetcher = vi.fn().mockImplementation(async (url) => {
+    if (url === '/api/translate/config') return Response.json(config)
     if (url === config.baseUrl + '/chat/completions') return Response.json({ choices: [{ message: { content: JSON.stringify({ word: 'hello', phonetic: '/həˈləʊ/', senses: [{ pos: 'int.', meaning: '你好' }] }) } }] })
     throw new Error('Unexpected request: ' + url)
   }); vi.stubGlobal('fetch', fetcher)
@@ -107,7 +150,7 @@ it('always asks the device model for words, including repeated known words and s
     })
   }
   expect(fetcher.mock.calls.filter(([url]) => url === config.baseUrl + '/chat/completions')).toHaveLength(3)
-  expect(fetcher.mock.calls.filter(([url, options]) => url === '/api/translate/config' && options?.method === 'POST')).toHaveLength(3)
+  expect(fetcher.mock.calls.filter(([url]) => url === '/api/translate/config')).toHaveLength(1)
   expect(fetcher.mock.calls.some(([url]) => url.startsWith('/api/word/') || url === '/api/ai-entry')).toBe(false)
   const upstream = fetcher.mock.calls.find(([url]) => url === config.baseUrl + '/chat/completions')!
   expect(JSON.parse(upstream[1].body)).toMatchObject({ stream: false, thinking: { type: 'disabled' } })
@@ -115,11 +158,11 @@ it('always asks the device model for words, including repeated known words and s
   expect(upstream[1].signal).toBe(aborter.signal)
 })
 
-it.each(['quota', 'network', 'invalid', 'abort'])('does not fall back to a dictionary request on a device word %s failure', async (failure) => {
+it.each(['network', 'invalid', 'abort'])('does not fall back to a dictionary request on a device word %s failure', async (failure) => {
   device.setRequestSource('device')
   const aborter = new AbortController()
-  const fetcher = vi.fn().mockImplementation(async (url, options) => {
-    if (url === '/api/translate/config') return Response.json(options?.method !== 'POST' ? config : failure === 'quota' ? { error: '今日配额已用完' } : { ok: true }, { status: options?.method === 'POST' && failure === 'quota' ? 429 : 200 })
+  const fetcher = vi.fn().mockImplementation(async (url) => {
+    if (url === '/api/translate/config') return Response.json(config)
     if (failure === 'network') throw new TypeError('Failed to fetch')
     if (failure === 'abort') aborter.abort()
     return Response.json({ choices: [{ message: { content: failure === 'invalid' ? 'not JSON' : JSON.stringify({ word: 'hello', senses: [{ meaning: '你好' }] }) } }] })
@@ -127,7 +170,6 @@ it.each(['quota', 'network', 'invalid', 'abort'])('does not fall back to a dicti
   const { lookupWordClient } = await import('@/lib/dict/clientLookup')
   expect(await lookupWordClient('Hello', aborter.signal)).toBeNull()
   expect(fetcher.mock.calls.some(([url]) => url.startsWith('/api/word/') || url === '/api/ai-entry')).toBe(false)
-  if (failure === 'quota') expect(fetcher.mock.calls.every(([url]) => url === '/api/translate/config')).toBe(true)
 })
 
 it('retains the server word lookup when device mode is off and restores it after switching off', async () => {
