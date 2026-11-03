@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useId, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import Link from 'next/link'
 import type { WordbookEntry } from '@/lib/wordbook/types'
 import { AudioButton } from '@/components/AudioButton'
@@ -13,27 +13,35 @@ export default function WordbookPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const requestRef = useRef<AbortController | null>(null)
+  const queryRef = useRef(query)
+  useEffect(() => { queryRef.current = query }, [query])
+
   const load = useCallback(async (q: string) => {
+    requestRef.current?.abort()
+    const controller = new AbortController()
+    requestRef.current = controller
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`/api/wordbook?q=${encodeURIComponent(q)}`)
+      const res = await fetch(`/api/wordbook?q=${encodeURIComponent(q)}`, { signal: controller.signal })
+      if (controller.signal.aborted) return
       if (!res.ok) {
         setError('加载失败，请重试。')
         return
       }
       const data = (await res.json()) as { entries: WordbookEntry[] }
-      setEntries(data.entries)
+      if (!controller.signal.aborted) setEntries(data.entries)
     } catch {
-      setError('网络错误，请重试。')
+      if (!controller.signal.aborted) setError('网络错误，请重试。')
     } finally {
-      setLoading(false)
+      if (!controller.signal.aborted) setLoading(false)
     }
   }, [])
 
   useEffect(() => {
     const t = setTimeout(() => void load(query), 250) // 输入防抖
-    return () => clearTimeout(t)
+    return () => { clearTimeout(t); requestRef.current?.abort() }
   }, [query, load])
 
   // 没有中文释义的词：点按钮批量补全（词库 → AI+原句 → 联网英文释义再翻译）。
@@ -87,7 +95,7 @@ export default function WordbookPage() {
       setFillNote('网络错误，请重试。')
     } finally {
       setFilling(false)
-      await load(query)
+      await load(queryRef.current)
     }
   }
 

@@ -302,3 +302,37 @@ describe('createScheduler', () => {
     expect(aborted).toBe(true)
   })
 })
+
+it('首字节之前取消立即中止，不启动兜底请求', async () => {
+  let upstream: AbortSignal | undefined
+  const slow: TranslationProvider = { name: 'ollama', async *stream(_m, signal) {
+    upstream = signal
+    await new Promise((_resolve, reject) => signal!.addEventListener('abort', () => reject(signal!.reason), { once: true }))
+    yield 'never'
+  } }
+  const fallback = okProvider('cloud', ['fallback'])
+  const spy = vi.spyOn(fallback, 'stream')
+  const abort = new AbortController()
+  const pending = createScheduler([slow, fallback]).run(MSGS, abort.signal)
+  abort.abort()
+  await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+  expect(upstream!.aborted).toBe(true)
+  expect(spy).not.toHaveBeenCalled()
+})
+it('等待下一块时取消会中止上游连接', async () => {
+  let upstream: AbortSignal | undefined
+  const provider: TranslationProvider = { name: 'cloud', async *stream(_m, signal) {
+    upstream = signal
+    yield 'first'
+    await new Promise((_resolve, reject) => signal!.addEventListener('abort', () => reject(signal!.reason), { once: true }))
+    yield 'never'
+  } }
+  const abort = new AbortController()
+  const result = await createScheduler([provider], { hedgeAfterMs: null }).run(MSGS, abort.signal)
+  const iterator = result.chunks[Symbol.asyncIterator]()
+  expect((await iterator.next()).value).toBe('first')
+  const next = iterator.next()
+  abort.abort()
+  await expect(next).rejects.toMatchObject({ name: 'AbortError' })
+  expect(upstream!.aborted).toBe(true)
+})

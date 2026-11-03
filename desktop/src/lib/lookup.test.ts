@@ -75,3 +75,10 @@ describe('lookupWord', () => {
     expect(log).toEqual([])
   })
 })
+
+it('查询错误返回 {data:null,error} 时进入错误分支，而不是未收录', async () => {
+  for (const table of ['dict_entries', 'dict_lemma']) {
+    const { db } = fakeDb({}, { selectError: { message: 'Failed to fetch' }, selectErrorTable: table })
+    await expect(lookupWord(db, 'hello')).rejects.toThrow('Failed to fetch')
+  }
+})

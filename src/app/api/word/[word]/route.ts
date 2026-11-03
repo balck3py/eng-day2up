@@ -44,7 +44,7 @@ export async function GET(
   if (detail.matchedFrom === 'none' && !skipAi) {
     const key = normalizeWord(decoded)
     if (isAiFallbackEligible(key) && (await consumeQuota(db, user.id))) {
-      const ai = await generateEntry(key)
+      const ai = await generateEntry(key, request.signal)
       if (ai) {
         const corrected = ai.word
         // 纠正后的词可能本就在词库里（如 recieve→receive）：回查一次，

@@ -40,3 +40,13 @@ describe('extractHardWords', () => {
     expect(log).toEqual([])
   })
 })
+
+it('原型与变形同现仍还原，并沿用原型熟练度过滤', async () => {
+  const t = tables()
+  const { db } = fakeDb(t)
+  const result = await extractHardWords(db, 'protocol protocols')
+  expect(result.map((w) => [w.word, w.surface, w.senses.length]))
+    .toEqual([['protocol', 'protocol', 1], ['protocol', 'protocols', 1]])
+  t.wordbook.push({ word_key: 'protocol', familiarity: 4 })
+  expect(await extractHardWords(db, 'protocol protocols')).toEqual([])
+})

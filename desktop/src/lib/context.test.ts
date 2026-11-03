@@ -5,6 +5,12 @@ describe('modeOf', () => {
   it('单词带标点仍是单词模式', () => {
     expect(modeOf(' ubiquitous, ')).toEqual({ kind: 'word', word: 'ubiquitous' })
   })
+  it('中英混合文本和数字不会被剥离为一个单词', () => {
+    for (const text of ['请帮我解释 hello 的含义', 'hello你好', '123hello456']) {
+      expect(modeOf(text)).toMatchObject({ kind: 'text', text })
+    }
+    expect(modeOf('“hello!”')).toEqual({ kind: 'word', word: 'hello' })
+  })
   it('句子是文本模式', () => {
     expect(modeOf('The cache is stale.')).toMatchObject({ kind: 'text', truncated: false })
   })

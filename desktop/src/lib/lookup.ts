@@ -28,12 +28,14 @@ interface Phonetics {
 
 async function findEntries(db: SupabaseClient, keys: string[]): Promise<EntryRow[]> {
   if (keys.length === 0) return []
-  const { data } = await db.from('dict_entries').select(ENTRY_COLUMNS).in('word_key', keys)
+  const { data, error } = await db.from('dict_entries').select(ENTRY_COLUMNS).in('word_key', keys)
+  if (error) throw new Error(error.message)
   return (data ?? []) as EntryRow[]
 }
 
 async function findLemmas(db: SupabaseClient, form: string): Promise<string[]> {
-  const { data } = await db.from('dict_lemma').select('lemma').eq('form', form)
+  const { data, error } = await db.from('dict_lemma').select('lemma').eq('form', form)
+  if (error) throw new Error(error.message)
   return ((data ?? []) as { lemma: string }[]).map((r) => r.lemma)
 }
 

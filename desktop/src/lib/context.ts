@@ -13,7 +13,7 @@ export type Mode =
 export function modeOf(raw: string): Mode {
   const text = raw.trim()
   if (!text) return { kind: 'empty' }
-  const core = text.replace(/^[^A-Za-z]+/, '').replace(/[^A-Za-z]+$/, '')
+  const core = text.replace(/^[\s\p{P}]+/u, '').replace(/[\s\p{P}]+$/u, '')
   if (isSingleWord(core)) return { kind: 'word', word: core }
   return {
     kind: 'text',

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createServerSupabase } from '@/lib/supabase/server'
-import { nextFamiliarity, nextSpellOkCount, resolveReviewedAt } from '@/lib/review/mark'
+import { resolveReviewedAt } from '@/lib/review/mark'
 import type { QuizType } from '@/lib/review/quiz'
 
 export async function POST(request: Request) {
@@ -12,6 +12,7 @@ export async function POST(request: Request) {
 
   const body = (await request.json().catch(() => null)) as {
     id?: unknown
+    eventId?: unknown
     known?: unknown
     quizType?: unknown
     reviewedAt?: unknown
@@ -23,37 +24,17 @@ export async function POST(request: Request) {
   const quizType: QuizType = body?.quizType === 'cn2en' ? 'cn2en' : 'en2cn'
   if (!id) return NextResponse.json({ error: '缺少记录 id' }, { status: 400 })
 
-  // 先读当前值再算新值。RLS 保证读不到别人的记录。
-  const { data: current, error: readErr } = await db
-    .from('wordbook')
-    .select('review_count, familiarity, spell_ok_count')
-    .eq('id', id)
-    .maybeSingle()
-  if (readErr) return NextResponse.json({ error: readErr.message }, { status: 500 })
-  if (!current) return NextResponse.json({ error: '记录不存在' }, { status: 404 })
-
-  const prevFamiliarity = current.familiarity as number
-  const familiarity = nextFamiliarity(prevFamiliarity, known)
-  const reviewCount = (current.review_count as number) + 1
-  const spellOkCount = nextSpellOkCount(
-    (current.spell_ok_count as number) ?? 0,
-    prevFamiliarity,
-    known,
-    quizType,
-  )
-
-  const { error: writeErr } = await db
-    .from('wordbook')
-    .update({
-      familiarity,
-      review_count: reviewCount,
-      spell_ok_count: spellOkCount,
-      // 补写的判定带着原始作答时间，见 resolveReviewedAt
-      last_reviewed_at: resolveReviewedAt(body?.reviewedAt, Date.now()),
-      // SM-2 的 due_at / ease_factor / interval_days 第一版不动
-    })
-    .eq('id', id)
-  if (writeErr) return NextResponse.json({ error: writeErr.message }, { status: 500 })
-
-  return NextResponse.json({ familiarity, reviewCount, spellOkCount })
+  // 老标签页没有 eventId 时，用原始作答时间构造稳定标识，兼容已有补写。
+  const eventId = typeof body?.eventId === 'string'
+    ? body.eventId
+    : `legacy:${id}:${typeof body?.reviewedAt === 'string' ? body.reviewedAt : Date.now()}:${known}:${quizType}`
+  if (!eventId || eventId.length > 200) {
+    return NextResponse.json({ error: '复习事件无效' }, { status: 400 })
+  }
+  const { data, error } = await db.rpc('mark_review', {
+    p_id: id, p_event_id: eventId, p_known: known, p_quiz_type: quizType,
+    p_reviewed_at: resolveReviewedAt(body?.reviewedAt, Date.now()),
+  })
+  if (error) return NextResponse.json({ error: error.message }, { status: error.code === 'P0002' ? 404 : 500 })
+  return NextResponse.json(data)
 }

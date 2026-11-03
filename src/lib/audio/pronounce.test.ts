@@ -8,6 +8,9 @@ class FakeAudio {
   static nextBehavior: PlayBehavior = 'resolve'
   static instances: FakeAudio[] = []
 
+  pause = vi.fn()
+  load = vi.fn()
+  removeAttribute = vi.fn()
   src: string
   private listeners = new Map<string, Set<() => void>>()
 
@@ -166,4 +169,28 @@ describe('pronounce', () => {
     )
     await expect(pronounce('apple', 'us')).resolves.toBe('local')
   })
+})
+
+it('超时清理远端音源，防止本地兜底后远端迟到开播', async () => {
+  vi.useFakeTimers()
+  FakeAudio.nextBehavior = 'hang'
+  const pending = pronounce('hello', 'us', 50)
+  const audio = FakeAudio.instances.at(-1)!
+  await vi.advanceTimersByTimeAsync(50)
+  expect(await pending).toBe('local')
+  expect(audio.pause).toHaveBeenCalled()
+  expect(audio.removeAttribute).toHaveBeenCalledWith('src')
+  expect(audio.load).toHaveBeenCalled()
+})
+it('新发音取消旧请求，旧请求不再启动本地兜底', async () => {
+  vi.useFakeTimers()
+  FakeAudio.nextBehavior = 'hang'
+  const old = pronounce('old', 'us', 50)
+  const oldAudio = FakeAudio.instances.at(-1)!
+  FakeAudio.nextBehavior = 'resolve'
+  expect(await pronounce('new', 'us', 50)).toBe('youdao')
+  expect(await old).toBe('failed')
+  await vi.advanceTimersByTimeAsync(100)
+  expect(oldAudio.pause).toHaveBeenCalled()
+  expect(fakeSynth.speak).not.toHaveBeenCalled()
 })

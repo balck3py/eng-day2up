@@ -13,8 +13,8 @@ export { isAiFallbackEligible, parseAiSenses, parseAiEntry } from './ai-parse'
  * 失败或判定为乱码返回 null，绝不抛异常。用非流式（收集完整文本再解析）——
  * 词条是一段 JSON，边流边解析没有意义。
  */
-export async function generateEntry(word: string): Promise<AiEntry | null> {
-  return generateEntryFrom(buildWordFallbackPrompt(word), word)
+export async function generateEntry(word: string, signal?: AbortSignal): Promise<AiEntry | null> {
+  return generateEntryFrom(buildWordFallbackPrompt(word), word, signal)
 }
 
 /**
@@ -24,9 +24,10 @@ export async function generateEntry(word: string): Promise<AiEntry | null> {
 export async function generateEntryFrom(
   messages: ChatMessage[],
   fallbackKey: string,
+  signal?: AbortSignal,
 ): Promise<AiEntry | null> {
   try {
-    const result = await getScheduler().run(messages)
+    const result = await getScheduler().run(messages, signal)
     let text = ''
     for await (const delta of result.chunks) text += delta
     const entry = parseAiEntry(text, fallbackKey)
@@ -55,10 +56,8 @@ export async function saveAiEntry(
   phonetic: string | null = null,
 ): Promise<void> {
   if (senses.length === 0) return // 空释义不写库，避免落垃圾负缓存
-  const { error } = await db.from('dict_entries').insert({
-    word,
-    translation: serializeSenses(senses),
-    phonetic,
+  const { error } = await db.rpc('save_ai_entry', {
+    p_word: word, p_translation: serializeSenses(senses), p_phonetic: phonetic,
   })
   if (error) console.error('AI 词条写回失败:', error.message)
 }
