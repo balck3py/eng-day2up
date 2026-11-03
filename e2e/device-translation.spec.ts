@@ -60,6 +60,65 @@ test('device switch persists, preloads config without storing the key and direct
   expect(server.length).toBeGreaterThanOrEqual(1); expect(upstream).toHaveLength(1)
 })
 
+test('podcast words always go directly to AI in device mode and return to dictionary lookup when disabled', async ({ page }) => {
+  const dictionary: string[] = [], upstream: string[] = []
+  let authorizations = 0
+  page.on('request', (request) => {
+    if (request.url().includes('/api/word/')) dictionary.push(request.url())
+    if (request.url() === config.baseUrl + '/chat/completions' && request.method() === 'POST') upstream.push(request.url())
+    if (request.url().includes('/api/translate/config') && request.method() === 'POST') authorizations++
+  })
+  await page.route('**/api/podcast/shows/daily-news/device-word', (route) => route.fulfill({ json: {
+    episode: { id: 'device-word', title: 'Device word test', publishedAt: null, image: null, channelImage: null, audio: null, english: null, chinese: null },
+    cues: [{ id: '0', startMs: 0, endMs: 1000, text: 'Hello Helo' }], englishError: null, chineseError: null,
+  } }))
+  await page.route('**/api/word/*', (route) => route.fulfill({ json: { word: 'hello', matchedFrom: 'exact', phonetic: '/həˈləʊ/', senses: [{ meaning: '词库释义' }] } }))
+  await page.route('**/api/wordbook?*', (route) => route.fulfill({ json: { entries: [] } }))
+  await page.route('https://device-model.example/**', (route) => route.fulfill({ headers: cors, json: {
+    choices: [{ message: { content: JSON.stringify({ word: 'hello', phonetic: '/həˈləʊ/', senses: [{ pos: 'int.', meaning: 'AI 问候释义' }] }) } }],
+  } }))
+  async function selectWord(word: string) {
+    await page.locator('[data-selection-english]').first().evaluate((element, word) => {
+      const node = element.firstChild!
+      const start = node.textContent!.indexOf(word)
+      const range = document.createRange(); range.setStart(node, start); range.setEnd(node, start + word.length)
+      const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range)
+      document.dispatchEvent(new Event('selectionchange'))
+    }, word)
+  }
+  await page.goto('/settings')
+  const toggle = page.getByRole('switch', { name: '由当前设备发起云端翻译' })
+  await toggle.click()
+  await expect(page.getByRole('status')).toContainText('已就绪')
+  await page.goto('/podcast/shows/daily-news/device-word')
+  await expect(page.locator('[data-selection-english]')).toBeVisible()
+  for (const word of ['Hello', 'Helo', 'Hello']) {
+    const request = page.waitForRequest((r) => r.url() === config.baseUrl + '/chat/completions' && r.method() === 'POST')
+    await selectWord(word)
+    const sent = await request
+    expect(sent.headers().authorization).toBe('Bearer ' + config.apiKey)
+    expect(sent.postDataJSON()).toMatchObject({ model: config.model, stream: false, thinking: { type: 'disabled' } })
+    const panel = page.getByRole('dialog')
+    await expect(panel).toContainText('AI 问候释义')
+    await expect(panel).toContainText('/həˈləʊ/')
+    await expect(panel.getByRole('button', { name: '播放单词发音' })).toBeVisible()
+    await expect(panel.getByRole('button', { name: '收藏 hello' })).toBeVisible()
+  }
+  expect(dictionary).toHaveLength(0)
+  expect(upstream.length).toBeGreaterThanOrEqual(3)
+  expect(authorizations).toBeGreaterThanOrEqual(3)
+  const deviceCalls = upstream.length
+  await page.goto('/settings'); await toggle.click()
+  await expect(toggle).not.toBeChecked()
+  await page.goto('/podcast/shows/daily-news/device-word')
+  await expect(page.locator('[data-selection-english]')).toBeVisible()
+  await selectWord('Hello')
+  await expect(page.getByRole('dialog')).toContainText('词库释义')
+  expect(dictionary.length).toBeGreaterThanOrEqual(1)
+  expect(dictionary.every((url) => !url.includes('ai=skip'))).toBe(true)
+  expect(upstream).toHaveLength(deviceCalls)
+})
+
 test('custom model save and clear remain independent of the cloud request switch', async ({ page }) => {
   let deviceCalls = 0
   page.on('request', (request) => { if (request.url().startsWith(config.baseUrl) && request.method() === 'POST') deviceCalls++ })

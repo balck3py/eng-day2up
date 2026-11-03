@@ -89,22 +89,67 @@ it('reports CORS/network errors without silently changing request origin', async
   expect(fetcher.mock.calls.some(([url]) => url === '/api/translate')).toBe(false)
 })
 
-it('keeps dictionary hits on the server and only calls the device model for missing entries', async () => {
+it('always asks the device model for words, including repeated known words and spelling corrections, without consulting the dictionary', async () => {
   device.setRequestSource('device')
-  let missing = false
+  const aborter = new AbortController()
   const fetcher = vi.fn().mockImplementation(async (url, options) => {
-    if (url.startsWith('/api/word/')) return Response.json({ word: 'ontology', matchedFrom: missing ? 'none' : 'exact', senses: [] })
     if (url === '/api/translate/config') return Response.json(options?.method === 'POST' ? { ok: true } : config)
-    if (url === '/api/ai-entry') return Response.json({ ok: true })
-    return Response.json({ choices: [{ message: { content: JSON.stringify({ word: 'ontology', phonetic: '/test/', senses: [{ pos: 'n.', meaning: '本体论' }] }) } }] })
+    if (url === config.baseUrl + '/chat/completions') return Response.json({ choices: [{ message: { content: JSON.stringify({ word: 'hello', phonetic: '/həˈləʊ/', senses: [{ pos: 'int.', meaning: '你好' }] }) } }] })
+    throw new Error('Unexpected request: ' + url)
   }); vi.stubGlobal('fetch', fetcher)
   const { lookupWordClient } = await import('@/lib/dict/clientLookup')
-  expect((await lookupWordClient('ontology'))?.matchedFrom).toBe('exact')
-  expect(fetcher).toHaveBeenCalledTimes(1)
-  missing = true
-  const detail = await lookupWordClient('ontology')
-  expect(detail?.matchedFrom).toBe('ai'); expect(detail?.senses[0].meaning).toBe('本体论')
-  expect(fetcher.mock.calls.some(([url]) => url === '/api/ai-entry')).toBe(true)
+  for (const word of ['Hello', 'Hello', 'Helo']) {
+    expect(await lookupWordClient(word, aborter.signal)).toEqual({
+      query: word, word: 'hello', correctedFrom: word === 'Helo' ? word : null,
+      matchedFrom: 'ai', phonetic: '/həˈləʊ/', senses: [{ pos: 'int.', meaning: '你好' }],
+      phoneticUs: null, phoneticUk: null, audioUs: null, audioUk: null,
+      tags: [], collins: null, oxford: false,
+    })
+  }
+  expect(fetcher.mock.calls.filter(([url]) => url === config.baseUrl + '/chat/completions')).toHaveLength(3)
+  expect(fetcher.mock.calls.filter(([url, options]) => url === '/api/translate/config' && options?.method === 'POST')).toHaveLength(3)
+  expect(fetcher.mock.calls.some(([url]) => url.startsWith('/api/word/') || url === '/api/ai-entry')).toBe(false)
   const upstream = fetcher.mock.calls.find(([url]) => url === config.baseUrl + '/chat/completions')!
   expect(JSON.parse(upstream[1].body)).toMatchObject({ stream: false, thinking: { type: 'disabled' } })
+  expect(upstream[1].headers.Authorization).toBe('Bearer ' + config.apiKey)
+  expect(upstream[1].signal).toBe(aborter.signal)
+})
+
+it.each(['quota', 'network', 'invalid', 'abort'])('does not fall back to a dictionary request on a device word %s failure', async (failure) => {
+  device.setRequestSource('device')
+  const aborter = new AbortController()
+  const fetcher = vi.fn().mockImplementation(async (url, options) => {
+    if (url === '/api/translate/config') return Response.json(options?.method !== 'POST' ? config : failure === 'quota' ? { error: '今日配额已用完' } : { ok: true }, { status: options?.method === 'POST' && failure === 'quota' ? 429 : 200 })
+    if (failure === 'network') throw new TypeError('Failed to fetch')
+    if (failure === 'abort') aborter.abort()
+    return Response.json({ choices: [{ message: { content: failure === 'invalid' ? 'not JSON' : JSON.stringify({ word: 'hello', senses: [{ meaning: '你好' }] }) } }] })
+  }); vi.stubGlobal('fetch', fetcher)
+  const { lookupWordClient } = await import('@/lib/dict/clientLookup')
+  expect(await lookupWordClient('Hello', aborter.signal)).toBeNull()
+  expect(fetcher.mock.calls.some(([url]) => url.startsWith('/api/word/') || url === '/api/ai-entry')).toBe(false)
+  if (failure === 'quota') expect(fetcher.mock.calls.every(([url]) => url === '/api/translate/config')).toBe(true)
+})
+
+it('retains the server word lookup when device mode is off and restores it after switching off', async () => {
+  const detail = { word: 'hello', matchedFrom: 'exact', senses: [{ meaning: '词库释义' }] }
+  const fetcher = vi.fn().mockImplementation(async () => Response.json(detail)); vi.stubGlobal('fetch', fetcher)
+  const { lookupWordClient } = await import('@/lib/dict/clientLookup')
+  expect(await lookupWordClient('Hello')).toEqual(detail)
+  device.setRequestSource('device'); device.setRequestSource('vercel')
+  expect(await lookupWordClient('Hello')).toEqual(detail)
+  expect(fetcher.mock.calls.map(([url]) => url)).toEqual(['/api/word/Hello', '/api/word/Hello'])
+})
+
+it('uses a custom model directly in device mode while preserving its dictionary-first behavior when the switch is off', async () => {
+  localStorage.setItem('localModelConfig', JSON.stringify({ baseUrl: 'http://localhost:11434/v1', model: 'custom' }))
+  const fetcher = vi.fn().mockImplementation(async (url) => url.startsWith('/api/word/')
+    ? Response.json({ word: 'hello', matchedFrom: 'exact', senses: [{ meaning: '词库释义' }] })
+    : Response.json({ choices: [{ message: { content: JSON.stringify({ word: 'hello', senses: [{ meaning: '自定义模型释义' }] }) } }] }))
+  vi.stubGlobal('fetch', fetcher)
+  const { lookupWordClient } = await import('@/lib/dict/clientLookup')
+  expect((await lookupWordClient('Hello'))?.matchedFrom).toBe('exact')
+  device.setRequestSource('device'); fetcher.mockClear()
+  expect((await lookupWordClient('Hello'))?.senses[0].meaning).toBe('自定义模型释义')
+  expect(fetcher).toHaveBeenCalledTimes(1)
+  expect(fetcher.mock.calls[0][0]).toBe('http://localhost:11434/v1/chat/completions')
 })
