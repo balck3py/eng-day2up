@@ -1,6 +1,7 @@
 'use client'
 
 import { useId, useState, useSyncExternalStore } from 'react'
+import { CloudRequestSwitch } from '@/components/CloudRequestSwitch'
 import {
   subscribeLocalModelConfig,
   getLocalModelConfigSnapshot,
@@ -80,8 +81,10 @@ export default function SettingsPage() {
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-5 py-10 sm:px-6">
+      <h1 className="text-xl font-semibold text-ink">设置</h1>
+      <CloudRequestSwitch />
       <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold text-ink">本地大模型</h1>
+        <h2 className="text-xl font-semibold text-ink">本地大模型</h2>
         <p className="text-[0.9375rem] leading-[1.7] text-ink-2">
           配置一个 OpenAI 兼容的本地模型端点后，翻译将由你的浏览器直接调用它，
           覆盖默认的云端后端。留空则继续使用默认后端。配置只保存在这台浏览器（localStorage）。

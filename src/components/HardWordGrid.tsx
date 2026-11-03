@@ -5,6 +5,7 @@ import type { HardWord } from '@/lib/hardwords/extract'
 import type { Sense } from '@/lib/dict/types'
 import { FavoriteButton } from './FavoriteButton'
 import { getLocalModelConfig, explainLocal } from '@/lib/translate/localModel'
+import { getRequestSource, getDeviceConfig, authorizeDeviceRequest } from '@/lib/translate/deviceTranslation'
 import { lookupWordClient } from '@/lib/dict/clientLookup'
 import { sentenceOf } from '@/lib/text/sentence'
 
@@ -58,6 +59,11 @@ function Card({ hw, context }: { hw: HardWord; context: string }) {
       if (local) {
         const text = await explainLocal(hw.word, context, local)
         setExplanation(text ?? '（本地模型释义失败，请检查设置）')
+      } else if (getRequestSource() === 'device') {
+        const config = await getDeviceConfig()
+        await authorizeDeviceRequest()
+        const text = await explainLocal(hw.word, context, config)
+        setExplanation(text ?? '（设备直连释义失败，可在设置切回 Vercel）')
       } else {
         const res = await fetch('/api/explain', {
           method: 'POST',

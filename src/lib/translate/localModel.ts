@@ -15,6 +15,8 @@ export interface LocalModelConfig {
   prompt?: string
   /** 可选 API Key（本地 ollama 通常不需要，别的端点可能要） */
   apiKey?: string
+  /** Used only by the website-provided device configuration. */
+  disableThinking?: boolean
 }
 
 const STORAGE_KEY = 'localModelConfig'
@@ -110,7 +112,7 @@ async function chatComplete(
   const res = await fetch(completionsUrl(config.baseUrl), {
     method: 'POST',
     headers: authHeaders(config),
-    body: JSON.stringify({ model: config.model, messages, stream: false }),
+    body: JSON.stringify({ model: config.model, messages, stream: false, ...(config.disableThinking ? { thinking: { type: 'disabled' } } : {}) }),
     signal,
   })
   if (!res.ok) throw new Error(`本地模型返回 ${res.status}`)
@@ -129,12 +131,14 @@ export async function generateLocalWordEntry(
   word: string,
   config: LocalModelConfig,
   signal?: AbortSignal,
+  throwOnError = false,
 ): Promise<AiEntry | null> {
   try {
     const entry = parseAiEntry(await chatComplete(config, buildWordFallbackPrompt(word), signal), word)
     if (!entry || entry.senses.length === 0) return null
     return entry
-  } catch {
+  } catch (error) {
+    if (throwOnError) throw error
     return null
   }
 }
@@ -177,7 +181,7 @@ export async function* streamLocalTranslate(
   const res = await fetch(completionsUrl(config.baseUrl), {
     method: 'POST',
     headers,
-    body: JSON.stringify({ model: config.model, messages, stream: true }),
+    body: JSON.stringify({ model: config.model, messages, stream: true, ...(config.disableThinking ? { thinking: { type: 'disabled' } } : {}) }),
     signal,
   })
   if (!res.ok || !res.body) {

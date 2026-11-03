@@ -110,6 +110,10 @@ npm run dev                          # http://localhost:3000
 | `ALLOWED_EMAILS` | Comma-separated sign-up/sign-in allowlist (empty = unrestricted) |
 | `E2E_EMAIL` / `E2E_PASSWORD` | Local Playwright account (never set in production) |
 
+### Choose where cloud translation requests originate
+
+In **Settings → Cloud translation request source**, enable device requests to fetch the website's model configuration and call it directly from the browser. The default remains Vercel. Authentication and daily quota checks remain; fetched credentials stay in page memory, and existing custom local models take precedence. See the [usage and validation notes](docs/device-translation.md).
+
 ### Using your own local model (no code, no redeploy)
 
 Open **Settings** in the app, fill in a Base URL, a model name, and optionally a custom prompt. It's stored in `localStorage` and only speaks the OpenAI protocol. Once set, translation / lookup-fallback / explanation all run through it.

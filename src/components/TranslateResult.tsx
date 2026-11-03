@@ -3,12 +3,13 @@
 import { HardWordGrid } from './HardWordGrid'
 import { SelectionPopover } from './SelectionPopover'
 import type { HardWord } from '@/lib/hardwords/extract'
-import type { ProviderName } from '@/lib/translate/types'
+import type { ClientProviderName } from '@/lib/translate/types'
 
-const PROVIDER_LABEL: Record<ProviderName | 'local', string> = {
+const PROVIDER_LABEL: Record<ClientProviderName, string> = {
   ollama: '本地 ollama',
   cloud: '云端模型',
   local: '本地模型（自配）',
+  device: '云端模型（设备直连）',
 }
 
 /**
@@ -26,7 +27,7 @@ export function TranslateResult({
 }: {
   source: string
   translation: string
-  provider: ProviderName | 'local' | null
+  provider: ClientProviderName | null
   hardWords: HardWord[]
   streaming: boolean
   error: string | null

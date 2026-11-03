@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { FavoriteButton } from '@/components/FavoriteButton'
 import { lookupWordClient } from '@/lib/dict/clientLookup'
 import { streamTranslate } from '@/lib/translate/client'
+import { getRequestSource } from '@/lib/translate/deviceTranslation'
 import { pronounce } from '@/lib/audio/pronounce'
 import type { WordDetail } from '@/lib/dict/types'
 
@@ -33,7 +34,7 @@ export function SelectionPanel({ picked, close }: { picked: Picked; close: () =>
         const result = await lookupWordClient(picked.text, controller.signal)
         if (!alive) return
         setDetail(result)
-        if (!result) setError('查询失败，请重试')
+        if (!result) setError(getRequestSource() === 'device' ? '设备查词失败，请重试或在设置切回 Vercel。' : '查询失败，请重试')
       } else {
         const outcome = await streamTranslate(picked.text, 'en2zh', (delta) => {
           if (alive) setTranslation((text) => text + delta)

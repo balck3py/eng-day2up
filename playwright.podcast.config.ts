@@ -1,7 +1,7 @@
 import { defineConfig } from '@playwright/test'
 
 export default defineConfig({
-  testDir: './e2e', testMatch: 'podcast.spec.ts', workers: 1,
+  testDir: './e2e', testMatch: ['podcast.spec.ts', 'device-translation.spec.ts'], workers: 1,
   timeout: 45_000, expect: { timeout: 10_000 },
   use: { baseURL: 'http://localhost:3107', trace: 'retain-on-failure' },
   projects: [

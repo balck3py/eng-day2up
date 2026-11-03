@@ -6,7 +6,7 @@ import { WordCard } from '@/components/WordCard'
 import { TranslateResult } from '@/components/TranslateResult'
 import type { WordDetail } from '@/lib/dict/types'
 import type { HardWord } from '@/lib/hardwords/extract'
-import type { Direction, ProviderName } from '@/lib/translate/types'
+import type { Direction, ClientProviderName } from '@/lib/translate/types'
 import { fetchHardWords, streamTranslate } from '@/lib/translate/client'
 import { lookupWordClient } from '@/lib/dict/clientLookup'
 import { addHistory } from '@/lib/history/store'
@@ -22,7 +22,7 @@ export default function HomePage() {
   const [direction, setDirection] = useState<Direction>('en2zh')
   const [detail, setDetail] = useState<WordDetail | null>(null)
   const [translation, setTranslation] = useState('')
-  const [provider, setProvider] = useState<ProviderName | 'local' | null>(null)
+  const [provider, setProvider] = useState<ClientProviderName | null>(null)
   const [hardWords, setHardWords] = useState<HardWord[]>([])
   const [source, setSource] = useState('')
   const [streaming, setStreaming] = useState(false)
