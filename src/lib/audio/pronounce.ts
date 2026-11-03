@@ -19,6 +19,8 @@ export function youdaoUrl(word: string, accent: Accent): string {
 }
 
 const DEFAULT_TIMEOUT_MS = 3000
+let generation = 0
+let stopPrevious: (() => void) | undefined
 
 /**
  * 尝试用有道音源播放。
@@ -49,11 +51,17 @@ function tryYoudao(
       return
     }
 
+    const stopAudio = () => {
+      audio.pause()
+      audio.removeAttribute('src')
+      audio.load()
+    }
     const finish = (ok: boolean) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
       audio.removeEventListener('error', onError)
+      if (!ok) stopAudio()
       resolve(ok)
     }
 
@@ -61,6 +69,7 @@ function tryYoudao(
     audio.addEventListener('error', onError)
 
     const timer = setTimeout(() => finish(false), timeoutMs)
+    stopPrevious = () => { if (settled) stopAudio(); else finish(false) }
 
     audio
       .play()
@@ -101,7 +110,12 @@ export async function pronounce(
   accent: Accent,
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<'youdao' | 'local' | 'failed'> {
+  const current = ++generation
+  stopPrevious?.()
+  stopPrevious = undefined
+  try { if (typeof window !== 'undefined') window.speechSynthesis?.cancel() } catch { /* Continue with remote audio. */ }
   const youdaoOk = await tryYoudao(word, accent, timeoutMs)
+  if (current !== generation) return 'failed'
   if (youdaoOk) return 'youdao'
   if (speakLocally(word, accent)) return 'local'
   return 'failed'

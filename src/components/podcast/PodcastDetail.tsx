@@ -18,13 +18,11 @@ function clock(seconds: number) {
 }
 
 function EnglishWords({ text, words, selected }: { text: string; words?: readonly WordTiming[]; selected?: number }) {
-  if (!words?.length) return text
   return Array.from(text.matchAll(/\s+|\S+/gu)).map((match) => {
     if (/^\s/u.test(match[0])) return match[0]
-    let index = words.findIndex((word) => word.startOffset === match.index)
-    if (index < 0 && /^[^\p{L}\p{N}]+$/u.test(match[0])) index = Math.max(0, words.findLastIndex((word) => word.endOffset <= match.index))
-    if (index < 0) return match[0]
-    return <span key={match.index} data-word-index={index} className={`rounded-sm hover:underline hover:decoration-focus/50 ${selected === index ? 'outline-2 outline-offset-2 outline-focus' : ''}`}>{match[0]}</span>
+    let index = words?.findIndex((word) => word.startOffset === match.index) ?? -1
+    if (index < 0 && words?.length && /^[^\p{L}\p{N}]+$/u.test(match[0])) index = Math.max(0, words!.findLastIndex((word) => word.endOffset <= match.index))
+    return <span key={match.index} data-word-index={index >= 0 ? index : undefined} className={`rounded-sm hover:underline hover:decoration-focus/50 ${selected === index ? 'outline-2 outline-offset-2 outline-focus' : ''}`}>{match[0]}</span>
   })
 }
 

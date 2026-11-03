@@ -106,14 +106,14 @@ export async function extractHardWords(
       ])
       collectFamiliarity(savedLemmaRes.data)
 
-      const lemmaEntries = new Map<string, EntryRow>()
       for (const r of (viaLemmaRes.data ?? []) as unknown as EntryRow[]) {
-        lemmaEntries.set(r.word_key, r)
+        byKey.set(r.word_key, r)
       }
-      for (const [form, lemma] of formToLemma) {
-        const hit = lemmaEntries.get(lemma)
-        if (hit) byKey.set(form, hit)
-      }
+    }
+    // 原型可能已在第一批查询命中，所有变形都从合并后的词条映射。
+    for (const [form, lemma] of formToLemma) {
+      const hit = byKey.get(lemma)
+      if (hit) byKey.set(form, hit)
     }
   }
 

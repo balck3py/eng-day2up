@@ -13,7 +13,7 @@ export interface SchedulerOptions {
 }
 
 export interface Scheduler {
-  run(messages: ChatMessage[]): Promise<TranslationStream>
+  run(messages: ChatMessage[], signal?: AbortSignal): Promise<TranslationStream>
 }
 
 const DEFAULTS = {
@@ -75,6 +75,7 @@ function acquire(
   messages: ChatMessage[],
   timeoutMs: number,
   hedgeAfterMs: number | null,
+  signal?: AbortSignal,
 ): Promise<{ attempt: Attempt; head: IteratorResult<string> }> {
   return new Promise((resolve, reject) => {
     const attempts: Attempt[] = []
@@ -82,10 +83,15 @@ function acquire(
     let settled = false
     let hedgeTimer: ReturnType<typeof setTimeout> | undefined
 
+    const onAbort = () => finish(() => {
+      attempts.forEach(cancel)
+      reject(signal?.reason ?? new DOMException('Aborted', 'AbortError'))
+    })
     const finish = (fn: () => void) => {
       settled = true
       clearTimeout(hedgeTimer)
       clearTimeout(deadline)
+      signal?.removeEventListener('abort', onAbort)
       fn()
     }
 
@@ -121,6 +127,8 @@ function acquire(
         }),
       timeoutMs,
     )
+    if (signal?.aborted) { onAbort(); return }
+    signal?.addEventListener('abort', onAbort, { once: true })
     fire()
     if (hedgeAfterMs !== null && hedgeAfterMs < timeoutMs) {
       hedgeTimer = setTimeout(() => {
@@ -150,10 +158,12 @@ export function createScheduler(
   )
 
   return {
-    async run(messages) {
+    async run(messages, signal) {
       const errors: string[] = []
 
+      signal?.throwIfAborted()
       for (const [i, provider] of providers.entries()) {
+        signal?.throwIfAborted()
         const isLast = i === providers.length - 1
         const breaker = breakers.get(provider.name)!
         // 熔断是为了更快地切到兜底；身后没有兜底时跳过它只会让请求必然失败
@@ -170,13 +180,21 @@ export function createScheduler(
             messages,
             isLast ? cfg.lastFirstByteTimeoutMs : cfg.firstByteTimeoutMs,
             isLast ? cfg.hedgeAfterMs : null,
+            signal,
           ))
         } catch (e) {
+          signal?.throwIfAborted()
           breaker.recordFailure(Date.now())
           errors.push(`${provider.name}: ${(e as Error).message}`)
           continue
         }
         const { controller, iterator } = attempt
+        const stop = () => {
+          cancel(attempt)
+          signal?.removeEventListener('abort', stop)
+        }
+        signal?.addEventListener('abort', stop, { once: true })
+        if (signal?.aborted) { stop(); signal.throwIfAborted() }
 
         breaker.recordSuccess()
 
@@ -184,8 +202,10 @@ export function createScheduler(
           provider: provider.name,
           chunks: (async function* () {
             try {
+              signal?.throwIfAborted()
               if (!head.done && head.value) yield head.value
               for (;;) {
+                signal?.throwIfAborted()
                 const next = await iterator.next()
                 if (next.done) return
                 if (next.value) yield next.value
@@ -193,9 +213,10 @@ export function createScheduler(
             } finally {
               // 消费者提前离开（客户端断连）时掐断上游，别让它继续烧 token。
               controller.abort()
+              signal?.removeEventListener('abort', stop)
             }
           })(),
-          cancel: () => controller.abort(),
+          cancel: stop,
         }
       }
 

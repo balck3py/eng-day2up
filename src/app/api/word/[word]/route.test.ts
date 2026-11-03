@@ -164,7 +164,9 @@ describe('GET /api/word/[word]', () => {
       phonetic: '/ɒnˈtɒlədʒi/',
       senses: [{ pos: 'n.', meaning: '本体论' }],
     })
-    const res = await GET(new Request('http://x/api/word/ontology'), ctx('ontology'))
+    const request = new Request('http://x/api/word/ontology')
+    const res = await GET(request, ctx('ontology'))
+    expect(generateEntryMock).toHaveBeenCalledWith('ontology', request.signal)
     expect(res.status).toBe(200)
     const body = await res.json()
     expect(body.matchedFrom).toBe('ai')

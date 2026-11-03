@@ -37,7 +37,7 @@ export async function POST(request: Request) {
   const db = createAdminSupabase()
   const outcome = await runWithQuota(
     () => consumeQuota(db, user.id),
-    () => getScheduler().run(buildExplainPrompt(word, context)),
+    () => getScheduler().run(buildExplainPrompt(word, context), request.signal),
   )
   if (outcome.kind === 'quota') {
     return NextResponse.json(

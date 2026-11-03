@@ -15,6 +15,8 @@ dict_entries 与 dict_lemma 两张表。
     uv run scripts/import_ecdict.py --skip-download # 复用已下载的数据
     uv run scripts/import_ecdict.py --dry-run       # 只统计不写库
 
+写库前需要应用 supabase/migrations/0004_reliable_writes.sql（import_key 幂等键）。
+
 ⚠️ 过滤规则与词形展开逻辑必须与 TypeScript 版保持一致：
     src/lib/dict/filter.ts   → should_import()
     src/lib/dict/exchange.ts → parse_exchange()
@@ -27,6 +29,8 @@ from __future__ import annotations
 import argparse
 import csv
 import io
+import hashlib
+import json
 import os
 import sys
 import time
@@ -319,7 +323,13 @@ class Supabase:
         raise SystemExit(f"❌ 写入 {table} 连续 5 次失败，中止")
 
     def insert_entries(self, rows: list[dict]) -> None:
-        self._post("dict_entries", rows)
+        identified = {}
+        for row in rows:
+            key = hashlib.sha256(json.dumps(
+                row, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+            ).encode("utf-8")).hexdigest()
+            identified[key] = dict(row, import_key=key)
+        self._post("dict_entries", list(identified.values()), on_conflict="import_key")
 
     def upsert_lemmas(self, rows: list[dict]) -> None:
         self._post("dict_lemma", rows, on_conflict="form,lemma")
@@ -368,7 +378,7 @@ def main() -> None:
         before_e, before_l = db.count("dict_entries"), db.count("dict_lemma")
         print(f"导入前：dict_entries={before_e}  dict_lemma={before_l}")
         if before_e > 0:
-            print("⚠️ dict_entries 非空。重复导入会产生重复词条。")
+            print("⚠️ dict_entries 非空。为避免与历史无 import_key 的词条混合，仍要求从空表导入。")
             print("   如需重来，先在 SQL Editor 执行： truncate dict_entries, dict_lemma;")
             sys.exit(1)
 

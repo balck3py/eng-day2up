@@ -20,7 +20,6 @@ import {
   enqueue,
   flushOutbox,
   readOutbox,
-  sendItem,
   type FetchLike,
   type OutboxDraft,
 } from '@/lib/review/outbox'
@@ -113,23 +112,19 @@ export default function ReviewPage() {
   const parsedLimit = Number.parseInt(limitText, 10)
   const nextLimit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 10
 
-  /** 发一条写库请求；失败了能重试的进补写队列，并刷新页面上的提示 */
-  const deliver = useCallback((draft: OutboxDraft) => {
-    void sendItem(draft, browserFetch).then((outcome) => {
-      if (outcome === 'auth' || outcome === 'retry') {
-        enqueue(draft)
-        setUnsaved(readOutbox().length)
-        if (outcome === 'auth') setAuthExpired(true)
-      }
-    })
-  }, [])
-
   const flush = useCallback(() => {
     void flushOutbox(browserFetch).then((r) => {
       setUnsaved(r.remaining)
       setAuthExpired(r.authExpired)
     })
   }, [])
+
+  /** 先持久化再发送；关页/响应丢失时仍可用同一个事件标识安全补写。 */
+  const deliver = useCallback((draft: OutboxDraft) => {
+    enqueue(draft)
+    setUnsaved(readOutbox().length)
+    flush()
+  }, [flush])
 
   /** 覆盖上一轮生词名单。本地立刻换上，免得回设置页还显示旧的 */
   const saveLeftover = useCallback(

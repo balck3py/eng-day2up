@@ -25,17 +25,26 @@ const paused = (page: Page) => page.locator('audio').evaluate((audio: HTMLAudioE
 
 async function selectText(page: Page, selector: string, text?: string) {
   await page.locator(selector).first().evaluate((element, text) => {
+    const content = element.textContent ?? ''
+    const start = text ? content.indexOf(text) : 0
+    if (start < 0) throw new Error(`Selection text not found: ${text}`)
+    const end = text ? start + text.length : content.length
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
-    let node: Node | null
+    const range = document.createRange()
+    let node: Node | null, offset = 0, started = false
     while ((node = walker.nextNode())) {
-      const value = node.textContent ?? ''
-      const start = text ? value.indexOf(text) : 0
-      if (start < 0) continue
-      const range = document.createRange()
-      range.setStart(node, start); range.setEnd(node, text ? start + text.length : value.length)
-      window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(range)
-      document.dispatchEvent(new Event('selectionchange'))
-      break
+      const next = offset + (node.textContent?.length ?? 0)
+      if (!started && start >= offset && start < next) {
+        range.setStart(node, start - offset)
+        started = true
+      }
+      if (started && end <= next) {
+        range.setEnd(node, end - offset)
+        window.getSelection()?.removeAllRanges(); window.getSelection()?.addRange(range)
+        document.dispatchEvent(new Event('selectionchange'))
+        break
+      }
+      offset = next
     }
   }, text)
 }
@@ -439,9 +448,13 @@ test('word enhancement loads after readable sentences without replacing audio, t
   await expect.poll(() => paused(page)).toBe(false)
   await page.locator('audio').evaluate((a: HTMLAudioElement) => a.pause())
   const at = await mediaTime(page), instance = await page.locator('audio').elementHandle()
+  await selectText(page, '[data-selection-english]', 'go')
+  expect(await page.evaluate(() => window.getSelection()?.toString())).toBe('go')
   release()
   await expect(row.locator('[data-word-index]')).toHaveCount(3)
   expect(await instance!.evaluate((audio) => audio.isConnected)).toBe(true)
+  expect(await page.evaluate(() => window.getSelection()?.toString())).toBe('go')
+  await page.evaluate(() => window.getSelection()?.removeAllRanges())
   expect(await mediaTime(page)).toBe(at); expect(await paused(page)).toBe(true)
   await row.locator('[data-word-index="2"]').click()
   expect(await mediaTime(page)).toBeGreaterThanOrEqual(2.1)
@@ -644,4 +657,25 @@ test('real MP3 word seeking uses actual word starts and sentence-final word ends
   await info.attach('real-word-timing.json', { body: JSON.stringify({ episodeId: latest.id, sentences: detail.cues.length, words: track.cues.length, timings }, null, 2), contentType: 'application/json' })
   console.log(`${info.project.name} real word timings: ${JSON.stringify(timings)}`)
   await page.screenshot({ path: info.outputPath('real-word-playback.png') })
+})
+
+test('wordbook search ignores an older response arriving after a new search', async ({ page }) => {
+  let release!: () => void
+  const pending = new Promise<void>((resolve) => { release = resolve })
+  const requests: string[] = []
+  await page.route('**/api/wordbook?*', async (route) => {
+    const q = new URL(route.request().url()).searchParams.get('q') ?? ''
+    requests.push(q)
+    if (q === 'alpha') await pending
+    await route.fulfill({ json: { entries: q ? [{ id: q, word: q, wordKey: q, senses: [{ pos: 'n.', meaning: '释义' }], familiarity: 0, reviewCount: 0 }] : [] } }).catch(() => {})
+  })
+  await page.goto('/wordbook')
+  const search = page.getByRole('textbox', { name: '搜索单词' })
+  await search.fill('alpha')
+  await expect.poll(() => requests.includes('alpha')).toBe(true)
+  await search.fill('beta')
+  await expect(page.locator('main')).toContainText('beta')
+  release()
+  await expect(page.locator('main')).not.toContainText('alpha')
+  await expect(page.locator('main')).toContainText('beta')
 })

@@ -31,7 +31,7 @@ export async function POST(request: Request) {
   const db = createAdminSupabase()
   const outcome = await runWithQuota(
     () => consumeQuota(db, user.id),
-    () => getScheduler().run(buildTranslatePrompt(text, direction)),
+    () => getScheduler().run(buildTranslatePrompt(text, direction), request.signal),
   )
   if (outcome.kind === 'quota') {
     return NextResponse.json(
@@ -47,20 +47,24 @@ export async function POST(request: Request) {
   const encoder = new TextEncoder()
   const send = (obj: unknown) => encoder.encode(`data: ${JSON.stringify(obj)}\n\n`)
 
+  let cancelled = false
   const stream = new ReadableStream({
     async start(controller) {
       try {
         for await (const delta of result.chunks) {
+          if (cancelled || request.signal.aborted) break
           controller.enqueue(send({ type: 'delta', value: delta }))
         }
-        controller.enqueue(send({ type: 'done' }))
+        if (!cancelled && !request.signal.aborted) controller.enqueue(send({ type: 'done' }))
       } catch (e) {
         // 首字节之后的中断：把已产出的内容留给前端，并明确告知中断
-        controller.enqueue(send({ type: 'error', value: (e as Error).message }))
+        if (!cancelled && !request.signal.aborted) controller.enqueue(send({ type: 'error', value: (e as Error).message }))
       } finally {
-        controller.close()
+        result.cancel()
+        if (!cancelled) controller.close()
       }
     },
+    cancel() { cancelled = true; result.cancel() },
   })
 
   return new Response(stream, {

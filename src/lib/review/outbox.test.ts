@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { classify, enqueue, flushOutbox, readOutbox, sendItem, type FetchLike } from './outbox'
 import { memoryStorage } from './storage'
 
@@ -55,13 +55,13 @@ describe('enqueue', () => {
 })
 
 describe('flushOutbox', () => {
-  it('成功与 drop 的移除，retry 的保留', async () => {
+  it('retry 保留且不越过失败请求发送后续判定', async () => {
     const kv = memoryStorage()
     ;['a', 'b', 'c'].forEach((id) => enqueue(mark(id), kv))
     const { fn } = fakeFetch({ a: 200, b: 500, c: 404 })
     const r = await flushOutbox(fn, kv)
-    expect(r).toEqual({ remaining: 1, authExpired: false })
-    expect(readOutbox(kv).map((x) => x.kind === 'mark' && x.id)).toEqual(['b'])
+    expect(r).toEqual({ remaining: 2, authExpired: false })
+    expect(readOutbox(kv).map((x) => x.kind === 'mark' && x.id)).toEqual(['b', 'c'])
   })
   it('遇到 401 停下，后面的不发', async () => {
     const kv = memoryStorage()
@@ -74,11 +74,49 @@ describe('flushOutbox', () => {
   it('补写途中新入队的不会被冲掉', async () => {
     const kv = memoryStorage()
     enqueue(mark('a'), kv)
+    let added = false
     const fn: FetchLike = async () => {
-      enqueue(mark('late'), kv)
+      if (!added) { enqueue(mark('late'), kv); added = true }
       return { status: 200 }
     }
     await flushOutbox(fn, kv)
-    expect(readOutbox(kv).map((x) => x.kind === 'mark' && x.id)).toContain('late')
+    expect(readOutbox(kv)).toEqual([])
   })
+})
+
+it('持久化事件标识在响应丢失重试时保持一致', async () => {
+  const kv = memoryStorage()
+  enqueue(mark('a'), kv)
+  const calls: string[] = []
+  let lost = true
+  const fn: FetchLike = async (_url, init) => {
+    calls.push(JSON.parse(String(init.body)).eventId)
+    if (lost) { lost = false; throw new Error('response lost after commit') }
+    return { status: 200 }
+  }
+  await flushOutbox(fn, kv)
+  expect(readOutbox(kv)).toHaveLength(1)
+  await flushOutbox(fn, kv)
+  expect(calls[0]).toBeTruthy()
+  expect(calls[1]).toBe(calls[0])
+  expect(readOutbox(kv)).toEqual([])
+})
+
+it('默认队列先写浏览器存储，存储不可写时仍能发送', async () => {
+  for (const blocked of [false, true]) {
+    vi.resetModules()
+    const local = memoryStorage()
+    if (blocked) local.setItem = () => { throw new Error('quota exceeded') }
+    vi.stubGlobal('window', { localStorage: local })
+    try {
+      const outbox = await import('./outbox')
+      const item = outbox.enqueue(mark('persist-before-send'))
+      expect(outbox.readOutbox()).toEqual([item])
+      if (!blocked) expect(local.getItem('review-outbox-v1')).toContain(item.key)
+      const { fn, calls } = fakeFetch({})
+      await outbox.flushOutbox(fn)
+      expect(calls[0].body.eventId).toBe(item.key)
+      expect(outbox.readOutbox()).toEqual([])
+    } finally { vi.unstubAllGlobals() }
+  }
 })
