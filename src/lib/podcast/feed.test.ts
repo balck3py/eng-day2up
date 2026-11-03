@@ -4,6 +4,16 @@ const base = 'https://qiniu.aiquannei.com/podcast/daily-news/'
 const item = (body = '', guid = 'one') => `<item><guid>${guid}</guid><title>A &amp; B</title><pubDate>Sun, 01 Nov 2026 09:00:00 +0800</pubDate><enclosure url="${base}a.mp3" type="audio/mpeg"/>${body}</item>`
 const rss = (items: string) => `<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:podcast="https://podcastindex.org/namespace/1.0"><channel><itunes:image href="${base}cover.jpg"/>${items}</channel></rss>`
 describe('podcast RSS', () => {
+  const en = `<podcast:transcript url="${base}a.srt" type="application/x-subrip" language="en"/>`
+  const zh = `<podcast:transcript url="${base}a.zh-CN.srt" type="application/x-subrip" language="zh-CN" rel="captions"/>`
+  const words = `<podcast:transcript url="${base}a.en.words.srt?v=2" type="application/x-subrip" language="en" rel="captions"/>`
+  it.each([[en, zh, words], [en, words, zh], [zh, en, words], [zh, words, en], [words, en, zh], [words, zh, en]])('keeps sentence English separate from word captions in any order: %s', (...tracks) => {
+    expect(parseFeed(rss(item(tracks.join(''))))[0]).toMatchObject({ english: base + 'a.srt', chinese: base + 'a.zh-CN.srt', englishWords: base + 'a.en.words.srt?v=2' })
+  })
+  it('keeps ordinary English captions and never promotes a words-only track', () => {
+    expect(parseFeed(rss(item(en.replace('/>', ' rel="captions"/>'))))[0]).toMatchObject({ english: base + 'a.srt', englishWords: null })
+    expect(parseFeed(rss(item(words)))[0]).toMatchObject({ english: null, englishWords: base + 'a.en.words.srt?v=2' })
+  })
   it('selects language independently of node order and stable IDs survive reordering', () => {
     const tracks = `<podcast:transcript url="${base}a.zh-CN.srt" type="application/x-subrip" language="zh-CN" rel="captions"/><podcast:transcript url="${base}a.srt" type="application/x-subrip" language="en"/>`
     const [episode] = parseFeed(rss(item(tracks)))

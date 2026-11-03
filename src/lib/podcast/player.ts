@@ -1,6 +1,9 @@
 import { cueAt } from './srt'
 import type { Cue } from './types'
 import { normalizeRate, savedRate, saveRate } from './rate'
+import type { WordAlignment } from './words'
+
+interface PlaybackTarget { id: string; startMs: number; endMs: number }
 
 export type PlaybackMode = 'sentence' | 'continuous'
 export interface PlayerState {
@@ -18,7 +21,8 @@ export class PodcastPlayer {
   private state: PlayerState = { mode: 'sentence', rate: 1, status: 'idle', time: 0, duration: 0, activeId: null, error: null }
   private listeners = new Set<() => void>()
   private generation = 0
-  private target: Cue | undefined
+  private target: PlaybackTarget | undefined
+  private alignment: WordAlignment = new Map()
   private pendingSeek: number | null = null
   private wantsPlay = false
   private disposed = false
@@ -52,6 +56,26 @@ export class PodcastPlayer {
 
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   snapshot = () => this.state
+  /** New timings affect future selections, never the current playback snapshot. */
+  setWordTimings(alignment: WordAlignment) {
+    if (this.disposed) return
+    this.alignment = alignment
+  }
+  private range(cue: Cue): PlaybackTarget {
+    const timed = this.alignment.get(cue.id)
+    return { id: cue.id, startMs: timed?.startMs ?? cue.startMs, endMs: timed?.endMs ?? cue.endMs }
+  }
+  private activeCue(timeMs: number) {
+    if (this.state.mode === 'sentence' && this.target && timeMs >= this.target.startMs && timeMs < this.target.endMs) {
+      return this.cues.find((cue) => cue.id === this.target!.id)
+    }
+    // A verified word range takes precedence over an overlapping old sentence range.
+    const timed = this.cues.findLast((cue) => {
+      const range = this.alignment.get(cue.id)
+      return range && range.startMs <= timeMs && range.endMs > timeMs
+    })
+    return timed ?? cueAt(this.cues.filter((cue) => !this.alignment.has(cue.id)), timeMs)
+  }
   private patch(patch: Partial<PlayerState>) {
     if (this.disposed) return
     const next = { ...this.state, ...patch }
@@ -90,7 +114,7 @@ export class PodcastPlayer {
         this.pause()
       }
     }
-    this.patch({ time: this.audio.currentTime, duration, activeId: cueAt(this.cues, this.audio.currentTime * 1000)?.id ?? null })
+    this.patch({ time: this.audio.currentTime, duration, activeId: this.activeCue(this.audio.currentTime * 1000)?.id ?? null })
   }
   private play() {
     const generation = ++this.generation
@@ -112,10 +136,11 @@ export class PodcastPlayer {
       this.patch({ status: 'error', error: '无法播放音频，请点击重试' })
     })
   }
-  select(cue: Cue) {
+  select(cue: Cue, wordIndex?: number) {
     this.audio.pause()
-    this.target = cue
-    this.pendingSeek = cue.startMs / 1000
+    const word = wordIndex === undefined ? undefined : this.alignment.get(cue.id)?.words[wordIndex]
+    this.target = { ...this.range(cue), ...(word ? { startMs: word.startMs } : {}) }
+    this.pendingSeek = this.target.startMs / 1000
     this.play()
   }
   fromStart() {
@@ -133,7 +158,10 @@ export class PodcastPlayer {
   toggle() {
     if (this.wantsPlay) return this.pause()
     if (this.state.mode === 'sentence') {
-      this.target ??= cueAt(this.cues, this.audio.currentTime * 1000) ?? this.cues[0]
+      if (!this.target) {
+        const cue = this.activeCue(this.audio.currentTime * 1000) ?? this.cues[0]
+        if (cue) this.target = this.range(cue)
+      }
       if (!this.target) return
       if (this.audio.currentTime >= this.target.endMs / 1000 || this.audio.currentTime < this.target.startMs / 1000) {
         this.pendingSeek = this.target.startMs / 1000
@@ -143,9 +171,10 @@ export class PodcastPlayer {
   }
   setMode(mode: PlaybackMode) {
     if (mode === this.state.mode) return
+    const cue = mode === 'sentence' ? this.activeCue(this.audio.currentTime * 1000) : undefined
     this.patch({ mode })
     if (mode === 'sentence') {
-      this.target = cueAt(this.cues, this.audio.currentTime * 1000)
+      this.target = cue ? this.range(cue) : undefined
       if (!this.target) this.pause()
     } else this.target = undefined
   }

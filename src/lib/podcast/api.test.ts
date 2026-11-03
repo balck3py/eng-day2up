@@ -1,7 +1,7 @@
 import { beforeEach, it, expect, vi } from 'vitest'
-const { getUser, catalog, episode } = vi.hoisted(() => ({ getUser: vi.fn(), catalog: vi.fn(), episode: vi.fn() }))
+const { getUser, catalog, episode, words } = vi.hoisted(() => ({ getUser: vi.fn(), catalog: vi.fn(), episode: vi.fn(), words: vi.fn() }))
 vi.mock('@/lib/supabase/server', () => ({ createServerSupabase: async () => ({ auth: { getUser } }) }))
-vi.mock('@/lib/podcast/load', async (original) => ({ ...await original<typeof import('./load')>(), loadCatalog: catalog, loadEpisode: episode }))
+vi.mock('@/lib/podcast/load', async (original) => ({ ...await original<typeof import('./load')>(), loadCatalog: catalog, loadEpisode: episode, loadWordTrack: words }))
 import { GET as list } from '@/app/api/podcast/route'
 import { GET as detail } from '@/app/api/podcast/[episodeId]/route'
 import { PodcastError } from './load'
@@ -37,6 +37,28 @@ it('returns 404 for unknown IDs and a retryable failure for upstream errors', as
 import { GET as programList } from '@/app/api/podcast/shows/[programId]/route'
 import { GET as programDetail } from '@/app/api/podcast/shows/[programId]/[episodeId]/route'
 import { PROGRAMS } from './programs'
+import { GET as wordTrack } from '@/app/api/podcast/shows/[programId]/[episodeId]/words/route'
+it('protects and scopes optional word tracks, with independent errors and no-store', async () => {
+  const request = new Request('http://x')
+  const params = Promise.resolve({ programId: 'daily-news', episodeId: 'same' })
+  getUser.mockResolvedValue({ data: { user: null } })
+  expect((await wordTrack(request, { params })).status).toBe(401)
+  expect(words).not.toHaveBeenCalled()
+  getUser.mockResolvedValue({ data: { user: { email: 'test@test.com' } } })
+  vi.stubEnv('ALLOWED_EMAILS', 'other@test.com')
+  expect((await wordTrack(request, { params })).status).toBe(403)
+  vi.stubEnv('ALLOWED_EMAILS', '')
+  expect((await wordTrack(request, { params: Promise.resolve({ programId: 'unknown', episodeId: 'same' }) })).status).toBe(404)
+  words.mockResolvedValue({ sourceUrl: null, cues: [] })
+  const response = await wordTrack(request, { params })
+  expect(await response.json()).toEqual({ sourceUrl: null, cues: [] })
+  expect(response.headers.get('Cache-Control')).toContain('private, no-store')
+  expect(words).toHaveBeenCalledWith('same', PROGRAMS[0])
+  for (const status of [404, 502]) {
+    words.mockRejectedValueOnce(new PodcastError('word track unavailable', status))
+    expect((await wordTrack(request, { params })).status).toBe(status)
+  }
+})
 it('scopes new routes to registered programs and rejects unknown programs after auth', async () => {
   const request = new Request('http://x')
   catalog.mockResolvedValue([]); episode.mockResolvedValue({ cues: [] })

@@ -7,6 +7,7 @@ export interface Episode {
   audio: string | null
   english: string | null
   chinese: string | null
+  englishWords: string | null
 }
 
 export interface Cue {
@@ -22,6 +23,11 @@ export interface EpisodeDetail {
   cues: Cue[]
   englishError: string | null
   chineseError: string | null
+}
+
+export interface WordTrack {
+  sourceUrl: string | null
+  cues: Cue[]
 }
 
 export function episodeDate(value: string | null): string {

@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect, vi } from 'vitest'
-import { fetchPodcastText, loadCatalog, loadEpisode } from './load'
+import { fetchPodcastText, loadCatalog, loadEpisode, loadWordTrack } from './load'
 const base = 'https://qiniu.aiquannei.com/podcast/daily-news/'
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 describe('bounded fixed-source requests', () => {
@@ -44,6 +44,30 @@ describe('bounded fixed-source requests', () => {
     expect(fetcher.mock.calls.every(([u]) => !String(u).includes('zh-CN'))).toBe(true)
     await expect(loadEpisode('missing')).rejects.toMatchObject({ status: 404 })
   })
+})
+
+it('loads the declared optional word track separately without blocking sentence detail', async () => {
+  const xml = `<rss><channel><item><guid>a</guid><podcast:transcript url="${base}a.srt" type="application/x-subrip" language="en"/><podcast:transcript url="${base}a.en.words.srt" type="application/x-subrip" language="en" rel="captions"/></item></channel></rss>`
+  const fetcher = vi.fn().mockImplementation(async (url: URL) => new Response(url.pathname.endsWith('xml') ? xml : '1\n00:00:00,100 --> 00:00:01,000\nHello'))
+  vi.stubGlobal('fetch', fetcher)
+  const id = (await loadCatalog())[0].id
+  const detail = await loadEpisode(id)
+  expect(detail.episode.english).toBe(base + 'a.srt')
+  expect(fetcher.mock.calls.some(([url]) => url.pathname.endsWith('.words.srt'))).toBe(false)
+  expect(await loadWordTrack(id)).toMatchObject({ sourceUrl: base + 'a.en.words.srt', cues: [{ text: 'Hello' }] })
+  await expect(loadWordTrack('missing')).rejects.toMatchObject({ status: 404 })
+  fetcher.mockImplementation(async (url: URL) => new Response(url.pathname.endsWith('xml') ? xml : '', { status: url.pathname.endsWith('.words.srt') ? 503 : 200 }))
+  await expect(loadWordTrack(id)).rejects.toThrow('503')
+})
+
+it('does not guess optional word URLs and rejects word resources outside the program', async () => {
+  for (const url of ['', 'https://evil.test/a.words.srt', 'https://qiniu.aiquannei.com/podcast/ai-digest/a.words.srt']) {
+    const xml = `<rss><channel><item><guid>a</guid>${url ? `<podcast:transcript url="${url}" type="application/x-subrip" language="en"/>` : ''}</item></channel></rss>`
+    const fetcher = vi.fn().mockImplementation(async () => new Response(xml)); vi.stubGlobal('fetch', fetcher)
+    const id = (await loadCatalog())[0].id
+    expect(await loadWordTrack(id)).toEqual({ sourceUrl: null, cues: [] })
+    expect(fetcher.mock.calls.every(([url]) => url.pathname.endsWith('feed.xml'))).toBe(true)
+  }
 })
 
 import { PROGRAMS } from './programs'

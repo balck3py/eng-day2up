@@ -49,10 +49,11 @@ export function parseFeed(xml: string, program: Program = PROGRAMS[0]): Episode[
     const date = Date.parse(text(item.pubDate))
     const tracks = list(item['podcast:transcript']).map(record)
       .filter((t) => text(t['@_type']).split(';')[0].toLowerCase() === 'application/x-subrip' && allowedUrl(t['@_url']))
-    function track(language: 'en' | 'zh-CN') {
+    function track(language: 'en' | 'zh-CN', words = false) {
       const candidates = tracks.filter((t) => {
         const lang = text(t['@_language']).toLowerCase()
-        return language === 'en' ? /^en(?:-|$)/.test(lang) : lang === 'zh-cn'
+        const isWords = /\.words\.srt$/i.test(new URL(text(t['@_url'])).pathname)
+        return language === 'en' ? /^en(?:-|$)/.test(lang) && isWords === words : lang === 'zh-cn'
       })
       candidates.sort((a, b) => {
         const score = (t: XmlNode) => (text(t['@_language']).toLowerCase() === language.toLowerCase() ? 2 : 0) +
@@ -65,7 +66,7 @@ export function parseFeed(xml: string, program: Program = PROGRAMS[0]): Episode[
       id, title: text(item.title) || '未命名节目',
       publishedAt: Number.isFinite(date) ? new Date(date).toISOString() : null,
       image: allowedUrl(record(item['itunes:image'])['@_href']), channelImage,
-      audio, english: track('en'), chinese: track('zh-CN'),
+      audio, english: track('en'), chinese: track('zh-CN'), englishWords: track('en', true),
     }
   }).filter((e): e is Episode => e !== null)
     .sort((a, b) => (b.publishedAt ? Date.parse(b.publishedAt) : 0) - (a.publishedAt ? Date.parse(a.publishedAt) : 0))
