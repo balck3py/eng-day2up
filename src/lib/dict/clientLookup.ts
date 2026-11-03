@@ -17,15 +17,36 @@ async function fetchDetail(word: string, signal?: AbortSignal): Promise<WordDeta
 
 /**
  * 浏览器侧查词：默认走服务端 /api/word（含服务端 AI 兜底）。
- * 若配置了本地模型，则让服务端跳过它那套 AI 兜底（?ai=skip），改由浏览器
+ * 开启设备直连时，单词始终由浏览器请求 AI，不查词库或回查纠正后的词。
+ * 关闭设备直连但配置了自定义本地模型时，让服务端跳过 AI 兜底（?ai=skip），改由浏览器
  * 直连本地模型为未收录词生成词条（含拼写纠正、音标、释义），并回写词库（收录）。
  * 失败返回 null，由调用方展示「查询失败」。
  */
 export async function lookupWordClient(word: string, signal?: AbortSignal): Promise<WordDetail | null> {
   const local = getLocalModelConfig()
-  const device = !local && getRequestSource() === 'device'
 
-  if (!local && !device) {
+  if (getRequestSource() === 'device') {
+    const key = normalizeWord(word)
+    if (!isAiFallbackEligible(key)) return null
+    try {
+      const config = local ?? await getDeviceConfig(signal)
+      if (!local) await authorizeDeviceRequest(signal)
+      const ai = await generateLocalWordEntry(key, config, signal, true)
+      if (!ai || signal?.aborted) return null
+      return {
+        query: word,
+        word: ai.word,
+        correctedFrom: ai.word !== key ? word : null,
+        matchedFrom: 'ai',
+        phonetic: ai.phonetic,
+        phoneticUs: null, phoneticUk: null, audioUs: null, audioUk: null,
+        senses: ai.senses,
+        tags: [], collins: null, oxford: false,
+      }
+    } catch { return null }
+  }
+
+  if (!local) {
     // 无本地模型：直接用服务端（内部已含 AI 兜底），不加 ?ai=skip
     try {
       const res = await fetch(`/api/word/${encodeURIComponent(word)}`, { signal })
@@ -46,9 +67,7 @@ export async function lookupWordClient(word: string, signal?: AbortSignal): Prom
 
   let ai: AiEntry | null
   try {
-    const config = local ?? await getDeviceConfig(signal)
-    if (device) await authorizeDeviceRequest(signal)
-    ai = device ? await generateLocalWordEntry(key, config, signal, true) : await generateLocalWordEntry(key, config, signal)
+    ai = await generateLocalWordEntry(key, local, signal)
   } catch { return null }
   if (!ai) return detail
 
