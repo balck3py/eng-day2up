@@ -1,7 +1,7 @@
 import { normalizeWord } from '@/lib/text/normalize'
 import { isAiFallbackEligible } from './ai-parse'
 import { getLocalModelConfig, generateLocalWordEntry } from '@/lib/translate/localModel'
-import { getRequestSource, getDeviceConfig, authorizeDeviceRequest } from '@/lib/translate/deviceTranslation'
+import { getRequestSource, getDeviceConfig } from '@/lib/translate/deviceTranslation'
 import type { AiEntry, WordDetail } from './types'
 
 /** 拉取服务端词条；?ai=skip 时服务端不做云端兜底。失败返回 null。 */
@@ -30,7 +30,6 @@ export async function lookupWordClient(word: string, signal?: AbortSignal): Prom
     if (!isAiFallbackEligible(key)) return null
     try {
       const config = local ?? await getDeviceConfig(signal)
-      if (!local) await authorizeDeviceRequest(signal)
       const ai = await generateLocalWordEntry(key, config, signal, true)
       if (!ai || signal?.aborted) return null
       return {

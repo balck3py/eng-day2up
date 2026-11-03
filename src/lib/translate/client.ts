@@ -1,7 +1,7 @@
 import type { HardWord } from '@/lib/hardwords/extract'
 import type { Direction, ClientProviderName } from './types'
 import { getLocalModelConfig, streamLocalTranslate } from './localModel'
-import { getRequestSource, getDeviceConfig, authorizeDeviceRequest, DeviceTranslationError } from './deviceTranslation'
+import { getRequestSource, getDeviceConfig, DeviceTranslationError } from './deviceTranslation'
 
 export interface StreamOutcome {
   provider: ClientProviderName | null
@@ -34,7 +34,6 @@ export async function streamTranslate(
 
     if (device) {
       const config = await getDeviceConfig(signal)
-      await authorizeDeviceRequest(signal)
       provider = 'device'; onProvider?.(provider)
       for await (const delta of streamLocalTranslate(text, direction, config, signal)) onDelta(delta)
       return { provider, error }

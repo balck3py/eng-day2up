@@ -1,7 +1,5 @@
 import { createServerSupabase } from '@/lib/supabase/server'
-import { createAdminSupabase } from '@/lib/supabase/admin'
 import { isEmailAllowed, parseAllowlist } from '@/lib/auth/allowlist'
-import { consumeQuota } from '@/lib/quota'
 
 export const dynamic = 'force-dynamic'
 const headers = { 'Cache-Control': 'private, no-store, max-age=0', Vary: 'Cookie', 'Cross-Origin-Resource-Policy': 'same-origin' }
@@ -29,11 +27,4 @@ export async function GET(request: Request) {
     if (url.protocol !== 'https:' || url.username || url.password) throw new Error('Invalid endpoint')
   } catch { return json({ error: '设备直连需要有效的 HTTPS 模型地址，请使用 Vercel 模式' }, 503) }
   return json({ baseUrl, model, apiKey, disableThinking: process.env.CLOUD_KEEP_THINKING !== '1' })
-}
-
-export async function POST(request: Request) {
-  const user = await userFor(request)
-  if (user instanceof Response) return user
-  const allowed = await consumeQuota(createAdminSupabase(), user.id)
-  return allowed ? json({ ok: true }) : json({ error: '已达今日翻译配额上限，明日 0 点重置。' }, 429)
 }
