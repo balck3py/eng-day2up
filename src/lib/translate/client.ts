@@ -1,9 +1,10 @@
 import type { HardWord } from '@/lib/hardwords/extract'
-import type { Direction, ProviderName } from './types'
+import type { Direction, ClientProviderName } from './types'
 import { getLocalModelConfig, streamLocalTranslate } from './localModel'
+import { getRequestSource, getDeviceConfig, authorizeDeviceRequest, DeviceTranslationError } from './deviceTranslation'
 
 export interface StreamOutcome {
-  provider: ProviderName | 'local' | null
+  provider: ClientProviderName | null
   /** 非空表示出错；已收到的部分译文仍通过 onDelta 交付过了 */
   error: string | null
 }
@@ -16,17 +17,26 @@ export async function streamTranslate(
   text: string,
   direction: Direction,
   onDelta: (delta: string) => void,
-  onProvider?: (p: ProviderName | 'local' | null) => void,
+  onProvider?: (p: ClientProviderName | null) => void,
   signal?: AbortSignal,
 ): Promise<StreamOutcome> {
   const local = getLocalModelConfig()
-  let provider: ProviderName | 'local' | null = null
+  const device = !local && getRequestSource() === 'device'
+  let provider: ClientProviderName | null = null
   let error: string | null = null
   try {
     if (local) {
       provider = 'local'
       onProvider?.(provider)
       for await (const delta of streamLocalTranslate(text, direction, local, signal)) onDelta(delta)
+      return { provider, error }
+    }
+
+    if (device) {
+      const config = await getDeviceConfig(signal)
+      await authorizeDeviceRequest(signal)
+      provider = 'device'; onProvider?.(provider)
+      for await (const delta of streamLocalTranslate(text, direction, config, signal)) onDelta(delta)
       return { provider, error }
     }
 
@@ -40,7 +50,7 @@ export async function streamTranslate(
       const data = (await res.json().catch(() => ({}))) as { error?: string }
       return { provider, error: data.error ?? '翻译失败，请重试。' }
     }
-    provider = res.headers.get('X-Provider') as ProviderName | null
+    provider = res.headers.get('X-Provider') as ClientProviderName | null
     onProvider?.(provider)
 
     const reader = res.body.getReader()
@@ -64,9 +74,10 @@ export async function streamTranslate(
         }
       }
     }
-  } catch {
+  } catch (cause) {
     if (signal?.aborted) return { provider, error: null }
-    error = local
+    const status = cause instanceof Error ? cause.message.match(/^本地模型返回 (\d{3})$/)?.[1] : null
+    error = device ? (cause instanceof DeviceTranslationError ? cause.message : status ? `设备模型返回 ${status}，请重试或在设置切回 Vercel。` : '设备直连失败，请检查上游跨域（CORS）或在设置切回 Vercel。') : local
       ? '本地模型调用失败，请检查设置里的 Base URL、跨域与混合内容限制。'
       : '网络错误，已保留收到的部分译文。'
   }

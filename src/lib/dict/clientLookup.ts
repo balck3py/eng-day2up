@@ -1,7 +1,8 @@
 import { normalizeWord } from '@/lib/text/normalize'
 import { isAiFallbackEligible } from './ai-parse'
 import { getLocalModelConfig, generateLocalWordEntry } from '@/lib/translate/localModel'
-import type { WordDetail } from './types'
+import { getRequestSource, getDeviceConfig, authorizeDeviceRequest } from '@/lib/translate/deviceTranslation'
+import type { AiEntry, WordDetail } from './types'
 
 /** 拉取服务端词条；?ai=skip 时服务端不做云端兜底。失败返回 null。 */
 async function fetchDetail(word: string, signal?: AbortSignal): Promise<WordDetail | null> {
@@ -22,8 +23,9 @@ async function fetchDetail(word: string, signal?: AbortSignal): Promise<WordDeta
  */
 export async function lookupWordClient(word: string, signal?: AbortSignal): Promise<WordDetail | null> {
   const local = getLocalModelConfig()
+  const device = !local && getRequestSource() === 'device'
 
-  if (!local) {
+  if (!local && !device) {
     // 无本地模型：直接用服务端（内部已含 AI 兜底），不加 ?ai=skip
     try {
       const res = await fetch(`/api/word/${encodeURIComponent(word)}`, { signal })
@@ -42,7 +44,12 @@ export async function lookupWordClient(word: string, signal?: AbortSignal): Prom
   const key = normalizeWord(word)
   if (!isAiFallbackEligible(key)) return detail
 
-  const ai = await generateLocalWordEntry(key, local, signal)
+  let ai: AiEntry | null
+  try {
+    const config = local ?? await getDeviceConfig(signal)
+    if (device) await authorizeDeviceRequest(signal)
+    ai = device ? await generateLocalWordEntry(key, config, signal, true) : await generateLocalWordEntry(key, config, signal)
+  } catch { return null }
   if (!ai) return detail
 
   if (signal?.aborted) return null

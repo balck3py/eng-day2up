@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { createBrowserSupabase } from '@/lib/supabase/client'
+import { clearDeviceConfig } from '@/lib/translate/deviceTranslation'
 
 const LINKS = [
   { href: '/', label: '翻译' },
@@ -20,6 +21,7 @@ export function NavBar() {
   if (pathname.startsWith('/login')) return null
 
   async function signOut() {
+    clearDeviceConfig()
     await createBrowserSupabase().auth.signOut()
     // 整页跳转，和登录页保持一致：让 cookie 与会话拦截彻底刷新
     window.location.href = '/login'

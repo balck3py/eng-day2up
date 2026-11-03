@@ -1,5 +1,6 @@
 export type Direction = 'en2zh' | 'zh2en'
 export type ProviderName = 'ollama' | 'cloud'
+export type ClientProviderName = ProviderName | 'local' | 'device'
 
 export interface ChatMessage {
   role: 'system' | 'user'
