@@ -66,7 +66,23 @@ export function ReviewFlipCard({
           {card.word}
         </p>
         {revealed ? (
-          <ReviewCardBack card={card} />
+          <>
+            {card.senses.length > 0 ? (
+              <ul className="mt-3 flex flex-col gap-1">
+                {card.senses.map((s, i) => (
+                  <li key={i} className="text-[1rem] leading-[1.7] text-ink">
+                    {s.pos && (
+                      <span className="mr-1.5 font-mono text-[0.8125rem] text-ink-2">{s.pos}</span>
+                    )}
+                    {s.meaning}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-3 text-[0.9375rem] text-ink-3">词库暂无中文释义</p>
+            )}
+            <ReviewCardBack card={card} />
+          </>
         ) : (
           <p className="mt-5 text-[0.9375rem] text-ink-3">点击或按空格翻面</p>
         )}
