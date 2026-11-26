@@ -158,7 +158,7 @@ export function ReviewInputCard({
             >
               改一下
             </button>
-            <ReviewCardBack card={card} />
+            <ReviewCardBack card={card} showSenses={false} />
           </div>
         )}
       </div>
